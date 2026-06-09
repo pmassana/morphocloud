@@ -1,0 +1,13 @@
+CLAUDE.md
+.claude/
+
+# data products (kept out of git; ~100GB local budget)
+data/
+models/
+
+# python
+__pycache__/
+*.egg-info/
+.ipynb_checkpoints/
+.pytest_cache/
+.ruff_cache/
