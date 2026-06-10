@@ -5,6 +5,9 @@ CLAUDE.md
 data/
 models/
 
+# fetch / build worker logs
+*.log
+
 # python
 __pycache__/
 *.egg-info/

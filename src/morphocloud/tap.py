@@ -1,9 +1,11 @@
 """TAP access to the external truth catalogs.
 
-Gaia DR3, LS DR10 and DELVE DR3 are mirrored at the NOIRLab Astro Data Lab;
-HSC v3 (HST) is served by the MAST VO TAP. One anonymous TAP service per
-archive, selected by name. Results are small (label columns only) and cached
-as parquet under data/labels/ by the labels modules.
+LS DR10 and DELVE DR3 are served by the NOIRLab Astro Data Lab; Gaia DR3 by
+the ESA Gaia archive (Data Lab mirrors it too, but ESA's result downloads
+are much faster and this spreads the load across archives); HSC v3 (HST) by
+the MAST VO TAP. One anonymous TAP service per archive, selected by name.
+Results are small (label columns only) and cached as parquet under
+data/labels/ by the labels modules.
 
 MAST quirks (verified 2026-06-09; Data Lab quirks are in docs/plan.md):
 column names are lowercase, SUM(CASE ...) does not parse, results are hard-
@@ -14,13 +16,23 @@ completeness against COUNT(*) and split big queries (LabelSource.max_rows).
 
 from __future__ import annotations
 
+import time
+
 import pandas as pd
 import pyvo
 
 SERVICES = {
     "datalab": "https://datalab.noirlab.edu/tap",
+    "esa_gaia": "https://gea.esac.esa.int/tap-server/tap",
     "mast_hsc": "https://mast.stsci.edu/vo-tap/api/v0.1/hsc",
 }
+
+# async-job polling: ESA drops kept-alive status connections routinely while
+# a job executes, so single poll failures must be tolerated, not fatal (pyvo's
+# run_async raises on the first one). The deadline hands genuinely stuck jobs
+# to the caller's retry logic.
+ASYNC_POLL_S = 10
+ASYNC_DEADLINE_S = 1800
 
 _services: dict[str, pyvo.dal.TAPService] = {}
 
@@ -31,12 +43,38 @@ def _service(name: str) -> pyvo.dal.TAPService:
     return _services[name]
 
 
+def _run_async(svc: pyvo.dal.TAPService, adql: str, maxrec: int):
+    job = svc.submit_job(adql, maxrec=maxrec)
+    try:
+        job.run()
+        t0 = time.time()
+        while True:
+            try:
+                phase = job.phase
+            except pyvo.dal.DALServiceError:
+                phase = None  # dropped poll connection; try again
+            if phase == "COMPLETED":
+                return job.fetch_result()
+            if phase in ("ERROR", "ABORTED"):
+                raise RuntimeError(f"async TAP job ended in phase {phase}")
+            if time.time() - t0 > ASYNC_DEADLINE_S:
+                raise TimeoutError(
+                    f"async TAP job still {phase} after {ASYNC_DEADLINE_S}s")
+            time.sleep(ASYNC_POLL_S)
+    finally:
+        try:
+            job.delete()
+        except Exception:
+            pass
+
+
 def query(adql: str, sync: bool = True, maxrec: int = 5_000_000,
           service: str = "datalab") -> pd.DataFrame:
     """Run an ADQL query; use sync=False for region fetches that may be large."""
     svc = _service(service)
-    run = svc.run_sync if sync else svc.run_async
-    return run(adql, maxrec=maxrec).to_table().to_pandas()
+    result = (svc.run_sync(adql, maxrec=maxrec) if sync
+              else _run_async(svc, adql, maxrec))
+    return result.to_table().to_pandas()
 
 
 def circle_condition(ra: float, dec: float, radius_deg: float,

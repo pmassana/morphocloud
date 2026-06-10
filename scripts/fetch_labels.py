@@ -3,9 +3,18 @@
 Resumable: cached tiles are skipped, so this can be re-run after
 interruptions. Usage:
 
-    python scripts/fetch_labels.py [max_tiles] [source ...]
+    python scripts/fetch_labels.py [max_tiles] [source ...] [--shard I/N]
 
 with source in {gaia_dr3, ls_dr10, delve_dr3, hsc_v3} (default: all four).
+--shard I/N makes this worker handle every Nth tile starting at I, so N
+parallel workers cover the footprint without ever racing on the same tile
+(run each source list in its own process too — the archives are
+independent). Example 3-way Gaia split alongside the Data Lab sources:
+
+    python scripts/fetch_labels.py gaia_dr3 --shard 0/3 &
+    python scripts/fetch_labels.py gaia_dr3 --shard 1/3 &
+    python scripts/fetch_labels.py gaia_dr3 --shard 2/3 &
+    python scripts/fetch_labels.py ls_dr10 delve_dr3 hsc_v3 &
 """
 
 import sys
@@ -23,19 +32,27 @@ RETRIES = 3
 
 
 def main(argv):
-    max_tiles = int(argv[1]) if len(argv) > 1 and argv[1].isdigit() else None
-    names = [a for a in argv[1:] if a in SOURCES] or list(SOURCES)
+    args = argv[1:]
+    shard, nshards = 0, 1
+    if "--shard" in args:
+        i = args.index("--shard")
+        shard, nshards = (int(x) for x in args[i + 1].split("/"))
+        args = args[:i] + args[i + 2:]
+    max_tiles = int(args[0]) if args and args[0].isdigit() else None
+    names = [a for a in args if a in SOURCES] or list(SOURCES)
 
     pixels = tiles.footprint_pixels(load_brick_list())[:max_tiles]
-    print(f"{len(pixels)} tiles x {names}")
+    pixels = pixels[shard::nshards]
+    print(f"{len(pixels)} tiles x {names}", flush=True)
 
     for name in names:
         src = SOURCES[name]
         done = sum(src.cache_path(p).exists() for p in pixels)
-        print(f"\n=== {name}: {done}/{len(pixels)} already cached ===")
+        print(f"\n=== {name}: {done}/{len(pixels)} already cached ===", flush=True)
         for i, pix in enumerate(pixels):
             if src.cache_path(pix).exists():
                 continue
+            print(f"[{i+1}/{len(pixels)}] {tiles.tile_id(pix)} ...", flush=True)
             for attempt in range(RETRIES):
                 try:
                     t0 = time.time()

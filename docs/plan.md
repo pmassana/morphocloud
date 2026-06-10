@@ -60,6 +60,18 @@ DELVE-MC catalog values alone.
   fetches split (`LabelSource.max_rows` recursively halves the box in dec);
   `GROUP BY FLOOR(expr)` runs server-side and is fast (full southern-cap census in
   seconds).
+- **ESA Gaia archive TAP** (`esa_gaia` service, switched 2026-06-10 after Data Lab
+  async result downloads degraded to ~20–50 KB/s; also offloads Data Lab): table
+  `gaiadr3.gaia_source`, same column names. Measured quirks: sync queries are capped
+  at 60 s execution (counts only — never tile fetches); async jobs execute reliably
+  but **linearly in result size at ~350 rows/s** (range vs ADQL-geometry conditions
+  makes no difference; counts are index-fast either way); the job-status endpoint
+  drops kept-alive connections routinely while a job executes, so polling must
+  tolerate failures (`tap._run_async`, which replaced pyvo's fragile `run_async`).
+  Raw Gaia is too big to fetch (504M rows south of dec −44; 5.4M in the LMC-center
+  tile alone) → the `point_source_mask` cuts also run server-side (2.5× fewer rows
+  in the dense interior), `max_rows=300k` keeps each COUNT-verified piece ~15 min,
+  and `fetch_labels.py --shard I/N` parallelizes tiles across workers.
 - **HSC coverage census** (`scripts/build_hst_coverage.py` →
   `data/labels/coverage/hsc_*.parquet`, 2026-06-09): 14.7M HSC sources fall in
   footprint bricks (10.6M with `numimages >= 2`), concentrated in 186 of 718 tiles and
@@ -74,11 +86,13 @@ DELVE-MC catalog values alone.
 Stream everything per brick / per sky chunk; never duplicate the DELVE-MC catalog.
 
 - `data/labels/` — truth tables fetched per HEALPix nside=32 tile (718 tiles cover the
-  footprint) via anonymous Data Lab TAP, cached as parquet. Label cuts run server-side
-  (`LabelSource.where`), which cuts fetch time ~4x: measured ~4 min/tile in the
-  periphery (Gaia 25 s, DR3 130 s, LS 76 s), so a full-footprint fetch is roughly a
-  day serial — resumable via `scripts/fetch_labels.py`, parallelizable across a few
-  workers if needed. Estimated a few GB total. `hsc_v3` (MAST) adds ~8 s for the
+  footprint) via anonymous TAP (Gaia from ESA, LS/DR3 from Data Lab, HSC from MAST),
+  cached as parquet. Label cuts run server-side (`LabelSource.where`) for all three
+  DECam-era sources *and* Gaia (added 2026-06-10 — mandatory at ESA's ~350 rows/s).
+  Periphery tiles measured 2026-06-09/10: Gaia ~2 min (ESA), DR3 130 s, LS 76 s. The
+  dense MC-interior tiles dominate the total (the LMC-center tile alone is ~2.1M Gaia
+  candidates ≈ 1.7 h); expect a few days serial, or run `scripts/fetch_labels.py`
+  sharded (`--shard I/N`) with one process per archive — resumable either way. Estimated a few GB total. `hsc_v3` (MAST) adds ~8 s for the
   ~530 empty tiles and minutes for dense MC tiles (100k-row split fetches; the 800k-row
   SMC tile took ~6 min, 35 MB parquet) — est. 2–3 GB over the 186 non-empty tiles.
 - `data/train/` — the final labelled feature table (single parquet, est. < 5 GB).
@@ -163,7 +177,7 @@ Stream everything per brick / per sky chunk; never duplicate the DELVE-MC catalo
   DELVE-MC itself, so morphology labels are not fully independent of our features; the
   future HST/JWST set is the only truly independent validation.
 
-### 2. Features (`features.py`)
+### 2. Features (`features.py`) — implemented 2026-06-10
 
 - Extinction-corrected g, r, i, z via catalog `EBV` × DECam SFD coefficients, **plus
   explicit colors** g−r, r−i, i−z (and wide-baseline g−i). Both go in: boosted trees use
@@ -171,20 +185,48 @@ Stream everything per brick / per sky chunk; never duplicate the DELVE-MC catalo
   splits when colors are explicit features, but must be approximated by many deep splits
   if the model only sees raw magnitudes. Magnitudes stay in too — they carry their own
   signal (the galaxy fraction and morphology reliability are strongly mag-dependent),
-  and XGBoost is robust to the redundancy.
+  and XGBoost is robust to the redundancy. Coefficients: DES DR1 (Abbott et al. 2018)
+  Fitzpatrick-99, A/E(B−V) = 3.186/2.140/1.569/1.196 — the set the DELVE DRs use.
 - Per-band `ERR`, `SCATTER`, `NDET`.
 - `CHI`, `SHARP`, `PROB`, `ELLIPTICITY`, `ASEMI`/`BSEMI`.
-- `FWHM` normalized by per-brick seeing (from `_meta.fits` exposures), and
-  `MAG_AUTO` − PSF mag as a concentration proxy.
+- `FWHM_RATIO` = coadd `FWHM` / per-brick seeing, plus the seeing itself (`SEEING`).
+  Verified 2026-06-10: catalog `FWHM` is already in **arcsec** (point sources sit at
+  the exposure seeing); per-brick seeing = median over the core-band medians from
+  `_meta.fits` (the coadd mixes all bands, so one band-agnostic normalizer).
+- `CONC` concentration proxy from `MAG_AUTO` − PSF mag. **Found 2026-06-10:
+  `MAG_AUTO` is on the coadd's instrumental zero point** (offsets of −4.4 to −5.9 mag
+  that vary per brick), so the raw difference is not survey-comparable. Two-stage
+  per-brick anchoring on bright point-like stars (`PROB ≥ 0.8`, `|SHARP| ≤ 0.3`,
+  16–20.5 mag, ≥20 per band): per-band median subtracted, then the per-source median
+  over bands re-centered on the anchors → CONC ≡ 0 for the brick's point sources by
+  construction, positive = extended (validated: extended `FWHM_RATIO > 2` sources sit
+  +0.4 to +2.1 mag above point sources). Stars keep a real mag-dependent CONC trend in
+  crowded bricks (saturation/neighbor flux) — fine for a tree that also sees mags.
 - u/Y dropped (too patchy). Missing values → NaN; XGBoost handles them natively.
 
-### 3. Dataset assembly (`dataset.py`)
+### 3. Dataset assembly (`dataset.py`) — implemented 2026-06-10
 
-- Per-brick worker: quality cuts (`BRICKUNIQ == 1`, detected in ≥2 of g/r/i, sane
-  errors) → cross-match against label tables → append labelled rows to parquet.
-- **Spatial splits**: assign whole bricks to train/val/test via coarse HEALPix
-  super-pixels so split boundaries are contiguous sky regions (no spatial leakage).
-  Track magnitude/color/seeing/crowding distributions per split.
+- Per-brick worker `brick_dataset`: quality cuts (`BRICKUNIQ == 1` via the reader;
+  detected with error < 0.5 in ≥2 of g/r/i) → `assemble.brick_labels` →
+  `features.brick_features` → labelled rows only (conflicts/unlabelled excluded).
+- **HST label-noise guard** (the stage-3 QC required by the stage-1 validation):
+  per brick, the fraction of `HST_GALAXY` claims colliding with star labels is
+  computed and stored (`HST_CONFLICT_RATE`); where it exceeds 0.2, galaxy labels
+  backed *only* by HST are dropped. Validated: the SMC-bar brick 0135m725 (rate
+  0.21) loses its HST-only labels, 0090m732 (rate 0.17) keeps its 10 net-new
+  interior galaxies.
+- **Spatial splits**: whole bricks assigned by their center to HEALPix nside=16
+  nest superpixels (~13.4 deg², ~210 bricks each), each superpixel hashed
+  deterministically (md5, machine-independent) into train/val/test = 70/15/15.
+  `split_summary` tracks per-split counts, star fraction, and r-mag/g−r/seeing
+  quantiles (written to `data/train/split_summary.csv` at merge time).
+- `scripts/build_dataset.py`: resumable shard-per-brick builder (atomic writes,
+  skip-if-exists, same pattern as fetch_labels) + `merge` step streaming all shards
+  into `data/train/dataset.parquet`. Run only after the label fetch has cached all
+  tiles (missing tiles are fetched on demand; must not race fetch_labels.py).
+- **Open**: the HST *field-level* train/val split override (interior pointings →
+  training, small interior holdout + periphery → validation) needs the full HSC
+  fetch to enumerate pointings; the generic superpixel split stands in until then.
 
 ### 4–7. Train, calibrate, evaluate, package
 
