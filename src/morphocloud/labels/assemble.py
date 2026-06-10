@@ -20,6 +20,11 @@ MATCH_RADIUS_ARCSEC = 0.5
 
 STAR, GALAXY, CONFLICT = 1, 0, -1
 
+PROVENANCE_COLUMNS = (
+    "GAIA_STAR", "LS_GALAXY", "DR3_STAR", "DR3_GALAXY",
+    "HST_GALAXY", "HST_BLEND",
+)
+
 
 def _match_flag(objects: pd.DataFrame, truth: pd.DataFrame,
                 ra_col: str = "ra", dec_col: str = "dec") -> np.ndarray:
