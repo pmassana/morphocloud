@@ -60,18 +60,37 @@ DELVE-MC catalog values alone.
   fetches split (`LabelSource.max_rows` recursively halves the box in dec);
   `GROUP BY FLOOR(expr)` runs server-side and is fast (full southern-cap census in
   seconds).
-- **ESA Gaia archive TAP** (`esa_gaia` service, switched 2026-06-10 after Data Lab
-  async result downloads degraded to ~20–50 KB/s; also offloads Data Lab): table
-  `gaiadr3.gaia_source`, same column names. Measured quirks: sync queries are capped
-  at 60 s execution (counts only — never tile fetches); async jobs execute reliably
-  but **linearly in result size at ~350 rows/s** (range vs ADQL-geometry conditions
-  makes no difference; counts are index-fast either way); the job-status endpoint
-  drops kept-alive connections routinely while a job executes, so polling must
-  tolerate failures (`tap._run_async`, which replaced pyvo's fragile `run_async`).
-  Raw Gaia is too big to fetch (504M rows south of dec −44; 5.4M in the LMC-center
-  tile alone) → the `point_source_mask` cuts also run server-side (2.5× fewer rows
-  in the dense interior), `max_rows=300k` keeps each COUNT-verified piece ~15 min,
-  and `fetch_labels.py --shard I/N` parallelizes tiles across workers.
+- **Gaia DR3 backend — CDS Vizier (primary since 2026-06-10 evening)**, `vizier`
+  service (`https://tapvizier.cds.unistra.fr/TAPVizieR/tap`), table `"I/355/gaiadr3"`
+  = the same DR3 source catalogue (identical `source_id` and values; cross-validated
+  against an ESA tile — pixel 8299 gave the *identical* 13,674 `source_id` set).
+  Switched here after the ESA archive dropped into a 503 maintenance/capacity outage
+  that stalled the run for ~2 h; ESA is expected to stay unstable through the Gaia
+  **DR4** run-up, so Vizier is the default and ESA the fallback. Vizier specifics:
+  it **renames the columns** (`Source`, `RA_ICRS`/`DE_ICRS` at epoch 2016.0, `Plx`,
+  `Gmag`/`BPmag`/`RPmag`, `RUWE`, `epsi`=excess_noise, `sepsi`=excess_noise_sig,
+  `IPDfmp`=ipd_frac_multi_peak), so `GAIA.rename` maps them back to the canonical
+  lowercase names and `GAIA.cast` pins 6 cols to float32 → cached tiles are
+  byte-schema-identical to the ESA tiles already on disk (they mix without
+  conversion). Crucially, **Vizier needs real ADQL geometry**: a plain ra/dec-box
+  `COUNT(*)` is unindexed and ~25× slower (38 s vs 1.5 s), so the tile box is sent
+  as `CONTAINS(POINT, POLYGON(...))` via `LabelSource.geometry=True` (`id_col` dedup
+  cleans the shared dec-edge of a split). It is fast (~13k rows/s: a 130k-row dense
+  tile in ~57 s), `max_rows=500k`, COUNT-verified, `--shard I/N` parallelized.
+- **ESA Gaia archive TAP** (`esa_gaia` service, `GAIA_ESA`; primary 2026-06-10 day
+  after Data Lab async downloads degraded to ~20–50 KB/s, demoted to fallback that
+  evening): table `gaiadr3.gaia_source`, canonical lowercase columns (no rename).
+  Measured quirks: sync queries are capped at 60 s execution (counts only — never
+  tile fetches); async jobs execute reliably but **linearly in result size at
+  ~350 rows/s** (range vs ADQL-geometry conditions makes no difference; counts are
+  index-fast either way); the job-status endpoint drops kept-alive connections
+  routinely while a job executes, so polling must tolerate failures (`tap._run_async`,
+  which replaced pyvo's fragile `run_async`). `max_rows=300k`.
+- **Gaia (both backends)**: raw Gaia is too big to fetch (504M rows south of dec −44;
+  5.4M in the LMC-center tile alone) → the `point_source_mask` cuts also run
+  server-side (2.5× fewer rows in the dense interior; ~2.1M in the LMC-center tile),
+  the local mask reapplies after the fetch so cached pre-cut tiles stay valid, and
+  `fetch_labels.py --shard I/N` parallelizes tiles across workers.
 - **HSC coverage census** (`scripts/build_hst_coverage.py` →
   `data/labels/coverage/hsc_*.parquet`, 2026-06-09): 14.7M HSC sources fall in
   footprint bricks (10.6M with `numimages >= 2`), concentrated in 186 of 718 tiles and
@@ -86,10 +105,11 @@ DELVE-MC catalog values alone.
 Stream everything per brick / per sky chunk; never duplicate the DELVE-MC catalog.
 
 - `data/labels/` — truth tables fetched per HEALPix nside=32 tile (718 tiles cover the
-  footprint) via anonymous TAP (Gaia from ESA, LS/DR3 from Data Lab, HSC from MAST),
+  footprint) via anonymous TAP (Gaia from Vizier, LS/DR3 from Data Lab, HSC from MAST),
   cached as parquet. Label cuts run server-side (`LabelSource.where`) for all three
   DECam-era sources *and* Gaia (added 2026-06-10 — mandatory at ESA's ~350 rows/s).
-  Periphery tiles measured 2026-06-09/10: Gaia ~2 min (ESA), DR3 130 s, LS 76 s. The
+  Periphery tiles measured 2026-06-09/10: Gaia ~15–30 s (Vizier; ~2 min on ESA),
+  DR3 130 s, LS 76 s. The
   dense MC-interior tiles dominate the total (the LMC-center tile alone is ~2.1M Gaia
   candidates ≈ 1.7 h); expect a few days serial, or run `scripts/fetch_labels.py`
   sharded (`--shard I/N`) with one process per archive — resumable either way. Estimated a few GB total. `hsc_v3` (MAST) adds ~8 s for the

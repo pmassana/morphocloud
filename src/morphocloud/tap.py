@@ -25,6 +25,13 @@ SERVICES = {
     "datalab": "https://datalab.noirlab.edu/tap",
     "esa_gaia": "https://gea.esac.esa.int/tap-server/tap",
     "mast_hsc": "https://mast.stsci.edu/vo-tap/api/v0.1/hsc",
+    # CDS Vizier mirror of Gaia DR3 (I/355/gaiadr3). Primary Gaia backend
+    # since 2026-06-10 — the ESA archive went into a maintenance/capacity
+    # outage (503s) and is expected to stay unstable through the DR4 run-up.
+    # Vizier supports real ADQL geometry, so Gaia tiles use CONTAINS/POLYGON
+    # (LabelSource.geometry): a plain ra/dec-box COUNT here is unindexed and
+    # ~25x slower (38 s vs 1.5 s) than the geometry form.
+    "vizier": "https://tapvizier.cds.unistra.fr/TAPVizieR/tap",
 }
 
 # async-job polling: ESA drops kept-alive status connections routinely while
