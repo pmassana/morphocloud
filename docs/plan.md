@@ -228,6 +228,27 @@ Stream everything per brick / per sky chunk; never duplicate the DELVE-MC catalo
   training, small interior holdout + periphery → validation) needs the full HSC
   fetch to enumerate pointings; the generic superpixel split stands in until then.
 
+### 3b. Label QA (`notebooks/qa_labels.ipynb`) — added 2026-06-10
+
+Visual + quantitative QA of the assembled labels before training. Gitignored
+(carries ~10 MB of embedded cutouts; regenerable). Run with the `morphocloud`
+Jupyter kernel; products land under `data/qa/`.
+
+- **Pool**: `dataset.brick_dataset` over the bricks whose gaia+ls+hsc tiles are all
+  cached (no on-demand fetches) → cached to `data/qa/labelled_pool.parquet`.
+- **Stratified sampling** by provenance source (gaia/ls/hst/dr3) × r-mag bin, so
+  faint/rare labels are inspected, not just bright easy ones.
+- **Contact sheets** of fast Legacy-viewer RGB cutouts (`ls-dr10`, non-blank inside
+  the MCs); green=star / red=galaxy border, `PROB`/`SHARP`/mag in the title.
+- **Catalog-only cross-check**: label vs pipeline `PROB`/`SHARP`/`CONC`; flags the
+  worst disagreements (initial run: 31.7% of star labels have pipeline PROB<0.5,
+  15.7% of galaxy labels PROB>0.5 — most likely DELVE `PROB` miscalibration given the
+  clean SHARP separation, star 0.24 vs galaxy 1.9, but worth eyeballing).
+- **CONFLICT / HST_BLEND** review (rebuilds the rows `brick_dataset` drops).
+- **Native-depth SIA** (`ls_dr10` g/r/z; `delve_dr3` SIA is empty in the inner MCs) —
+  per-object `deep_look` and a **viewer-vs-SIA side-by-side** for the suspects.
+- Writes `data/qa/inspection_*.csv` scaffolds (empty `verdict` column) to record calls.
+
 ### 4–7. Train, calibrate, evaluate, package
 
 - XGBoost binary logloss, `scale_pos_weight` for imbalance, early stopping on the

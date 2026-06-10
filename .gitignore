@@ -8,6 +8,9 @@ models/
 # fetch / build worker logs
 *.log
 
+# QA notebook (carries ~10MB of embedded cutout images; regenerable, local-only)
+notebooks/qa_labels.ipynb
+
 # python
 __pycache__/
 *.egg-info/
