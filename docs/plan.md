@@ -1,8 +1,9 @@
 # Tier 1 implementation plan — gradient-boosted star–galaxy classifier
 
 Status: agreed 2026-06-09. Decisions locked: bulk labels from **Gaia DR3 (stars) + Legacy
-Surveys DR10 (galaxies)**; HST/JWST deep fields deferred to a later faint-end validation
-set. The pipeline `PROB` column **is** included as an input feature (with a PROB-only cut
+Surveys DR10 (galaxies)**; **HSC v3 (HST)** promoted to a fourth label source for the
+faint MC interior (2026-06-09, after the coverage census below), with HST fields split
+between training and an independent validation holdout; JWST stays deferred. The pipeline `PROB` column **is** included as an input feature (with a PROB-only cut
 reported as a reference baseline). **DELVE DR3** (DESDM reduction, Astro Data Lab) is a
 third label provenance (conservative high-S/N `spread_model` cuts only) and the headline
 external baseline — but its columns are **never model inputs**: inference must run from
@@ -49,6 +50,24 @@ DELVE-MC catalog values alone.
   predicates don't parse — use plain ra/dec range conditions (indexed, fast; see
   `tap.box_condition`). `LIMIT` is silently ignored — use `TOP n`. Missing floats are
   stored as NaN, *not* NULL, so `IS NOT NULL` does not filter them.
+- **HSC v3 via MAST VO TAP** (`https://mast.stsci.edu/vo-tap/api/v0.1/hsc`, anonymous,
+  verified 2026-06-09): summary table `dbo.summagaper2catview`, lowercase columns
+  (`matchra`, `matchdec`, `ci`, `ci_sigma`, `numimages`, per-instrument magnitudes
+  `a_*`/`w2_*`/`w3_*` = ACS/WFPC2/WFC3). Quirks: `SUM(CASE …)` is rejected (strict
+  ADQL 2.1 parser); results are **hard-capped at 100,000 rows** (sync and async,
+  `maxrec` above it silently ignored) and the overflow flag is unreliable (also set
+  on complete results) — so completeness must be verified against `COUNT(*)` and big
+  fetches split (`LabelSource.max_rows` recursively halves the box in dec);
+  `GROUP BY FLOOR(expr)` runs server-side and is fast (full southern-cap census in
+  seconds).
+- **HSC coverage census** (`scripts/build_hst_coverage.py` →
+  `data/labels/coverage/hsc_*.parquet`, 2026-06-09): 14.7M HSC sources fall in
+  footprint bricks (10.6M with `numimages >= 2`), concentrated in 186 of 718 tiles and
+  752 of 35,052 bricks (2.1% — pencil-beam, but dense exactly on the Clouds). Of the
+  1,002 bricks blind to both LS DR10 and DELVE DR3 (the inner MCs), **270 (27%) have
+  HSC sources — 7.7M with `numimages >= 2`**, of which ~1.6M pass a provisional
+  `ci > 1.3` extended cut (a blend-inflated upper bound on the galaxy-label pool, to
+  be replaced by validated per-instrument CI thresholds).
 
 ## Storage strategy (~100 GB budget, catalog excluded)
 
@@ -59,7 +78,9 @@ Stream everything per brick / per sky chunk; never duplicate the DELVE-MC catalo
   (`LabelSource.where`), which cuts fetch time ~4x: measured ~4 min/tile in the
   periphery (Gaia 25 s, DR3 130 s, LS 76 s), so a full-footprint fetch is roughly a
   day serial — resumable via `scripts/fetch_labels.py`, parallelizable across a few
-  workers if needed. Estimated a few GB total.
+  workers if needed. Estimated a few GB total. `hsc_v3` (MAST) adds ~8 s for the
+  ~530 empty tiles and minutes for dense MC tiles (100k-row split fetches; the 800k-row
+  SMC tile took ~6 min, 35 MB parquet) — est. 2–3 GB over the 186 non-empty tiles.
 - `data/train/` — the final labelled feature table (single parquet, est. < 5 GB).
 - `models/` — serialized XGBoost + calibrator (MB scale).
 - Inference output — per-brick parquet of `OBJID`, calibrated probability
@@ -90,6 +111,43 @@ Stream everything per brick / per sky chunk; never duplicate the DELVE-MC catalo
   spread_model's faint-end errors, so they carry their own provenance flag, get
   ablation-tested (train with/without; evaluate on Gaia/LS/HST-labelled holdout), and can
   be down-weighted relative to Gaia/LS labels.
+- **Galaxies ← HSC v3 (HST, MAST)** — implemented & validated 2026-06-09: the only
+  galaxy source inside the MCs and the only label set independent of DECam imaging.
+  Cut (`labels/hsc.py`): `ci > 1.6` AND `ci_sigma < 0.2·ci` AND an optical broad-band
+  detection (IR-only sources excluded — WFC3/IR shifts the CI scale) AND
+  `numimages >= 2` (server-side). Matching is blend-aware and many-to-one
+  (`assemble._component_flags`): each HSC component is assigned to its nearest DELVE
+  object within 0.5", and the object is `HST_GALAXY` only if *every* component passes
+  the galaxy cut; mixed/ambiguous components → `HST_BLEND`, unlabelled but counted.
+  **No star labels from HSC**: validation showed HSC shreds big galaxies
+  (LS `shape_r` > 1.5") into point-like knots (ci ~ 1.1), so point-like CI ≠ star at
+  faint magnitudes. Validation against Gaia stars and LS galaxies (tiles
+  hp32-08298 = deep periphery field, hp32-08329 = SMC interior):
+  - Unsaturated stars (G > 18.5): ci p50 ≈ 1.02, p95 ≈ 1.2 (periphery) – 1.5
+    (crowded interior). Leak past ci = 1.6 is <1% / 2.2% respectively; the
+    `ci_sigma` guard cuts the worst case to ~0.9% (leaked stars have ci_sigma
+    p50 = 0.66 — crowding-inflated CI is inconsistent across images — vs 0.08 for
+    real galaxies; the guard keeps 100% of LS-confirmed ci > 1.6 galaxies).
+  - Saturated bright stars (G ≲ 18.5) inflate to ci ~ 1.3–4; they carry Gaia/DR3
+    star labels, so assemble's conflict logic drops them automatically.
+  - End-to-end: 0496m662 (periphery): 17 `HST_GALAXY`, 11 LS/DR3-confirmed, 0 star
+    conflicts. 0090m732 (blind interior): 10 net-new galaxy labels where every other
+    galaxy source is empty. 0135m725 (SMC bar, densest pointing): 599 claims with
+    127 Gaia-star conflicts (auto-dropped) → in the densest bar fields the surviving
+    sub-Gaia labels are estimated only ~50% pure. **Dataset assembly (stage 3) must
+    use the per-brick Gaia-conflict rate of `HST_GALAXY` as a label-noise monitor
+    and drop/down-weight HST labels in bricks where it is high.**
+  Bias to document: HST pointings oversample clusters/dense fields, and shredding
+  makes the galaxy labels lean compact. **Split policy (2026-06-09)**: HST data is
+  split by field/pointing between training and validation; interior fields go to
+  training (nothing else labels the inner MCs), except a small holdout of interior
+  pointings so release metrics can be quoted for the inner MCs, plus periphery
+  fields for validation.
+- Backend (implemented 2026-06-09): `tap.py` keeps a service registry (Data Lab +
+  MAST, one cached `TAPService` each); `LabelSource.service` selects the endpoint and
+  `LabelSource.max_rows` works around MAST's 100k-row hard cap (COUNT-verified,
+  recursively dec-split box fetches). `tiles.py` unchanged — the box-condition ADQL
+  is service-agnostic.
 - **DR3 columns are never input features.** The released classifier must run from
   DELVE-MC catalog values alone, so train-time inputs are restricted to the same schema.
   DR3 enters through labels and evaluation only. (Possible later experiment, not v1:
@@ -142,17 +200,9 @@ Stream everything per brick / per sky chunk; never duplicate the DELVE-MC catalo
 
 ### Later (not blocking v1)
 
-- **HST faint-end validation set from the Hubble Source Catalog v3** (MAST,
-  `astroquery.mast` anonymous access verified 2026-06-09). HSC is pencil-beam but deep
-  exactly where everything else is blind: 18k sources in a 0.125° cone at the SMC
-  center (LS DR10/DR3: zero there; Gaia ends at G~20.5). Star/galaxy from the `CI`
-  concentration index with per-detector thresholds (WFPC2/ACS/WFC3 differ), an
-  unlabelled ambiguity band, and `NumImages >= 2` against artifacts. Cross-match must
-  be many-to-one aware (DELVE ~1" PSF vs HST 0.05": mixed point+extended components
-  within one DELVE source = blend, dropped). Independent of DECam imaging — unlike
-  LS/DR3. If validation shows high consistency, HSC labels can later be promoted into
-  training for the faint MC interior. Bias to document: HST pointings oversample
-  clusters/dense fields.
+- ~~HST faint-end set from the Hubble Source Catalog v3~~ — promoted into stage 1
+  label assembly (2026-06-09) after the coverage census showed HSC reaches 27% of the
+  label-blind inner-MC bricks; see the HSC bullet above.
 - JWST deep fields (e.g., the Time-Domain Field at the South Ecliptic Pole) as a
   further faint-end check.
 - Tiers 2/3 (image-based models) on a remote server with more storage.

@@ -5,7 +5,7 @@ interruptions. Usage:
 
     python scripts/fetch_labels.py [max_tiles] [source ...]
 
-with source in {gaia_dr3, ls_dr10, delve_dr3} (default: all three).
+with source in {gaia_dr3, ls_dr10, delve_dr3, hsc_v3} (default: all four).
 """
 
 import sys
@@ -15,9 +15,10 @@ from morphocloud.bricks import load_brick_list
 from morphocloud.labels import tiles
 from morphocloud.labels.delvedr3 import DELVEDR3
 from morphocloud.labels.gaia import GAIA
+from morphocloud.labels.hsc import HSC
 from morphocloud.labels.lsdr10 import LSDR10
 
-SOURCES = {s.name: s for s in (GAIA, LSDR10, DELVEDR3)}
+SOURCES = {s.name: s for s in (GAIA, LSDR10, DELVEDR3, HSC)}
 RETRIES = 3
 
 
