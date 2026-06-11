@@ -5,8 +5,8 @@ interruptions. Usage:
 
     python scripts/fetch_labels.py [max_tiles] [source ...] [--shard I/N]
 
-with source in {gaia_dr3, gaia_galcand, gaia_qsocand, ls_dr10, delve_dr3,
-hsc_v3} (default: all).
+with source in {gaia_dr3, gaia_galcand, gaia_qsocand, ls_dr10, ls_dr10_mask,
+delve_dr3, hsc_v3} (default: all).
 --shard I/N makes this worker handle every Nth tile starting at I, so N
 parallel workers cover the footprint without ever racing on the same tile
 (run each source list in its own process too — the archives are
@@ -27,9 +27,10 @@ from morphocloud.labels.delvedr3 import DELVEDR3
 from morphocloud.labels.gaia import GAIA
 from morphocloud.labels.gaia_extragal import GALCAND, QSOCAND
 from morphocloud.labels.hsc import HSC
-from morphocloud.labels.lsdr10 import LSDR10
+from morphocloud.labels.lsdr10 import LSDR10, LS_MASK
 
-SOURCES = {s.name: s for s in (GAIA, GALCAND, QSOCAND, LSDR10, DELVEDR3, HSC)}
+SOURCES = {s.name: s for s in (GAIA, GALCAND, QSOCAND, LSDR10, LS_MASK,
+                               DELVEDR3, HSC)}
 RETRIES = 3
 
 

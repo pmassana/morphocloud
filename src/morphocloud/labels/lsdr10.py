@@ -35,6 +35,42 @@ LSDR10 = LabelSource(
 
 GALAXY_TYPES = ("DEV", "EXP", "SER")
 
+# Artifact-region mask: LS rows whose MASKBITS flags a bright-star/defect
+# region. The primary galaxy source above filters maskbits=0, so the masked
+# rows it needs are not in its cache — this is a separate fetch of the
+# complement. Note: near the MC cores DR10 ran no independent detection
+# (Gaia-forced PSF rows only), so this mask is sparse exactly where DELVE-MC
+# is densest — a documented coverage limit of the LS-maskbits approach.
+#
+# DR10 MASKBITS (verified vs legacysurvey.org/dr10/bitmasks, 2026-06-11):
+#   0 NPRIMARY  1 BRIGHT  2-4 SATUR_{g,r,z}  5-7 ALLMASK_{g,r,z}
+#   8/9 WISEM1/2  10 BAILOUT  11 MEDIUM  12 GALAXY  13 CLUSTER
+#   14 SATUR_I  15 ALLMASK_I  16 SUB_BLOB
+# Bits that are NOT instrumental artifacts, so must never exclude training
+# data (an object can carry these alongside real artifact bits):
+#   0  NPRIMARY - brick-edge bookkeeping; set even on brick_primary sources
+#   11 MEDIUM   - medium-bright star halo (Gaia G<16); too much footprint for
+#                 a mild halo (Pol's call 2026-06-11), not treated as artifact
+#   12 GALAXY   - real SGA large galaxy
+#   13 CLUSTER  - real globular cluster (e.g. 47 Tuc blankets the SMC tile)
+#   16 SUB_BLOB - deblending bookkeeping, not a defect
+# Everything else (BRIGHT, SATUR_*, ALLMASK_*, WISEM*, BAILOUT) flags an
+# artifact-prone region.
+LS_NONARTIFACT_BITS = (1 << 0) | (1 << 11) | (1 << 12) | (1 << 13) | (1 << 16)
+
+LS_MASK = LabelSource(
+    name="ls_dr10_mask",
+    table="ls_dr10.tractor",
+    columns=("ra", "dec", "maskbits"),
+    where="maskbits != 0 AND brick_primary = 1",
+)
+
+
+def masked_mask(df: pd.DataFrame) -> pd.Series:
+    """LS rows inside an artifact-prone region (any artifact maskbit set)."""
+    mb = df["maskbits"].astype("int64")
+    return (mb & ~LS_NONARTIFACT_BITS) != 0
+
 
 def galaxy_mask(df: pd.DataFrame) -> pd.Series:
     """High-confidence extended sources (conservative: REX excluded)."""

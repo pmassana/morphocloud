@@ -89,8 +89,12 @@ def brick_dataset(
         float((claims & star_vote).sum() / claims.sum()) if claims.any() else 0.0
     )
 
-    keep = quality_mask(objects) & labels["LABEL"].isin(
-        [assemble.STAR, assemble.GALAXY]
+    keep = (
+        quality_mask(objects)
+        & labels["LABEL"].isin([assemble.STAR, assemble.GALAXY])
+        # drop objects in LS-flagged artifact regions (bright-star ghosts,
+        # saturation, bad pixels): not valid star/galaxy training examples
+        & ~labels["IN_ARTIFACT_MASK"]
     )
     if conflict_rate > max_hst_conflict:
         hst_only = (

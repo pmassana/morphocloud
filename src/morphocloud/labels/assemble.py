@@ -24,6 +24,12 @@ from . import delvedr3, gaia, gaia_extragal, hsc, lsdr10, tiles
 # verified against Gaia DR3: median offset ~0.01", 90th pct sep 0.15"
 MATCH_RADIUS_ARCSEC = 0.5
 
+# Artifact-mask match radius: LS masked rows sample (not delineate) the masked
+# region, so a DELVE-MC object is flagged if it sits within this radius of any
+# masked LS detection. Looser than the label radius to bridge the sampling
+# spacing inside a region without bleeding far past its edges.
+MASK_MATCH_ARCSEC = 1.0
+
 STAR, GALAXY, CONFLICT = 1, 0, -1
 
 PROVENANCE_COLUMNS = (
@@ -33,8 +39,9 @@ PROVENANCE_COLUMNS = (
 
 
 def _match_flag(objects: pd.DataFrame, truth: pd.DataFrame,
-                ra_col: str = "ra", dec_col: str = "dec") -> np.ndarray:
-    """True for objects matched to a truth row within MATCH_RADIUS_ARCSEC.
+                ra_col: str = "ra", dec_col: str = "dec",
+                radius: float = MATCH_RADIUS_ARCSEC) -> np.ndarray:
+    """True for objects matched to a truth row within `radius` arcsec.
 
     Each truth row may label only one object: in crowded fields several
     objects can claim the same truth source, and only the closest keeps it.
@@ -44,7 +51,7 @@ def _match_flag(objects: pd.DataFrame, truth: pd.DataFrame,
         return flag
     i_obj, i_truth, sep = sky_match(
         objects["RA"], objects["DEC"], truth[ra_col], truth[dec_col],
-        MATCH_RADIUS_ARCSEC,
+        radius,
     )
     order = np.argsort(sep)
     seen: set[int] = set()
@@ -108,6 +115,7 @@ def brick_labels(brickname: str, objects: pd.DataFrame | None = None) -> pd.Data
     gx = gaia_extragal.GALCAND.load(pixels)
     qs = gaia_extragal.QSOCAND.load(pixels)
     ls = lsdr10.LSDR10.load(pixels)
+    lm = lsdr10.LS_MASK.load(pixels)
     d3 = delvedr3.DELVEDR3.load(pixels)
     hs = hsc.HSC.load(pixels)
 
@@ -141,4 +149,24 @@ def brick_labels(brickname: str, objects: pd.DataFrame | None = None) -> pd.Data
 
     out = pd.concat([objects[["BRICKNAME", "OBJID"]], label, prov], axis=1)
     out["IN_MC_CORE"] = gaia_extragal.in_mc_core(objects["RA"], objects["DEC"])
+    out["IN_ARTIFACT_MASK"] = _in_artifact_mask(objects, lm)
     return out
+
+
+def _in_artifact_mask(objects: pd.DataFrame, ls_mask: pd.DataFrame) -> np.ndarray:
+    """True for objects within MASK_MATCH_ARCSEC of any masked LS row.
+
+    A region flag (many-to-one): unlike the label matchers, every object near
+    a masked detection is flagged, not just the nearest one.
+    """
+    in_mask = np.zeros(len(objects), dtype=bool)
+    masked = ls_mask[lsdr10.masked_mask(ls_mask)] if len(ls_mask) else ls_mask
+    if len(masked) == 0 or len(objects) == 0:
+        return in_mask
+    i_obj, _, _ = sky_match(
+        objects["RA"], objects["DEC"],
+        masked[lsdr10.LS_MASK.ra_col], masked[lsdr10.LS_MASK.dec_col],
+        MASK_MATCH_ARCSEC,
+    )
+    in_mask[i_obj] = True
+    return in_mask

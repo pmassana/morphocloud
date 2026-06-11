@@ -6,7 +6,7 @@ import pytest
 
 from morphocloud import dataset, features
 from morphocloud.config import DATA_DIR, DELVEMC_DATA
-from morphocloud.labels import assemble
+from morphocloud.labels import assemble, lsdr10
 
 # bricks whose label tiles (hp32-08298 / 08329) are cached for offline tests:
 # 0496m662 = deep periphery field, 0135m725 = SMC bar (densest HST pointing)
@@ -17,9 +17,35 @@ needs_data = pytest.mark.skipif(
         DELVEMC_DATA.exists()
         and (DATA_DIR / "labels/hsc_v3/hp32-08298.parquet").exists()
         and (DATA_DIR / "labels/hsc_v3/hp32-08329.parquet").exists()
+        and (DATA_DIR / "labels/ls_dr10_mask/hp32-08298.parquet").exists()
+        and (DATA_DIR / "labels/ls_dr10_mask/hp32-08329.parquet").exists()
     ),
     reason="DELVE-MC catalogs or cached label tiles not on this machine",
 )
+
+
+def test_masked_mask_bits():
+    # artifact bits (BRIGHT, SATUR, ALLMASK, WISEM, BAILOUT) flag a region;
+    # NPRIMARY/MEDIUM/GALAXY/CLUSTER/SUB_BLOB do not. A non-artifact bit
+    # alongside a real artifact bit still counts as masked.
+    df = pd.DataFrame({"maskbits": [
+        0, 1 << 0, 1 << 1, 1 << 11, 1 << 12, 1 << 13, 1 << 16,
+        (1 << 13) | (1 << 1)]})
+    assert lsdr10.masked_mask(df).tolist() == [
+        False, False, True, False, False, False, False, True]
+
+
+def test_in_artifact_mask_many_to_one():
+    # three objects within 1" of one masked row are all flagged (region flag,
+    # not the one-to-one label matcher); a far object is not
+    objects = pd.DataFrame({
+        "RA": [10.0, 10.00005, 10.0001, 20.0], "DEC": [0.0, 0.0, 0.0, 0.0]})
+    masked = pd.DataFrame({"ra": [10.0], "dec": [0.0], "maskbits": [1 << 1]})
+    assert assemble._in_artifact_mask(objects, masked).tolist() == [
+        True, True, True, False]
+    # a GALAXY-only masked row is not an artifact -> nothing flagged
+    real = pd.DataFrame({"ra": [10.0], "dec": [0.0], "maskbits": [1 << 12]})
+    assert not assemble._in_artifact_mask(objects, real).any()
 
 
 def test_pixel_split_deterministic_fractions():
