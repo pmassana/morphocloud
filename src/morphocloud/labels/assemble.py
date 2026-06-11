@@ -3,7 +3,13 @@
 Cross-matches a brick's objects against all label sources and combines the
 votes: STAR if any star source claims it, GALAXY if any galaxy source claims
 it, conflicting claims dropped (kept with label=CONFLICT for accounting).
-Provenance flags record which surveys contributed each label.
+Provenance flags record which surveys contributed each label. Two flags are
+accounting-only, never votes: HST_BLEND (mixed/ambiguous HST components) and
+GAIA_QSO (purer Gaia QSO candidates — point sources, so their STAR labels
+from the astrometric cuts are correct for the morphological target; the flag
+exists for contamination measurements and downstream masking). IN_MC_CORE
+marks objects inside the Gaia extragalactic paper's LMC/SMC exclusion
+circles, for split evaluation of the crowded cores.
 """
 
 from __future__ import annotations
@@ -13,7 +19,7 @@ import pandas as pd
 
 from .. import bricks
 from ..crossmatch import sky_match
-from . import delvedr3, gaia, hsc, lsdr10, tiles
+from . import delvedr3, gaia, gaia_extragal, hsc, lsdr10, tiles
 
 # verified against Gaia DR3: median offset ~0.01", 90th pct sep 0.15"
 MATCH_RADIUS_ARCSEC = 0.5
@@ -21,8 +27,8 @@ MATCH_RADIUS_ARCSEC = 0.5
 STAR, GALAXY, CONFLICT = 1, 0, -1
 
 PROVENANCE_COLUMNS = (
-    "GAIA_STAR", "LS_GALAXY", "DR3_STAR", "DR3_GALAXY",
-    "HST_GALAXY", "HST_BLEND",
+    "GAIA_STAR", "GAIA_GALAXY", "GAIA_QSO", "LS_GALAXY",
+    "DR3_STAR", "DR3_GALAXY", "HST_GALAXY", "HST_BLEND",
 )
 
 
@@ -87,7 +93,8 @@ def brick_labels(brickname: str, objects: pd.DataFrame | None = None) -> pd.Data
     """Labels and provenance for one brick's (BRICKUNIQ) objects.
 
     Returns a frame aligned row-by-row with `objects`, with columns LABEL
-    (STAR/GALAXY/CONFLICT, NaN if unlabelled) and per-source provenance flags.
+    (STAR/GALAXY/CONFLICT, NaN if unlabelled), per-source provenance flags,
+    and the IN_MC_CORE region flag.
     """
     if objects is None:
         objects = bricks.read_objects(brickname)
@@ -98,6 +105,8 @@ def brick_labels(brickname: str, objects: pd.DataFrame | None = None) -> pd.Data
     )}
 
     g = gaia.GAIA.load(pixels)
+    gx = gaia_extragal.GALCAND.load(pixels)
+    qs = gaia_extragal.QSOCAND.load(pixels)
     ls = lsdr10.LSDR10.load(pixels)
     d3 = delvedr3.DELVEDR3.load(pixels)
     hs = hsc.HSC.load(pixels)
@@ -110,6 +119,9 @@ def brick_labels(brickname: str, objects: pd.DataFrame | None = None) -> pd.Data
     )
     prov = pd.DataFrame({
         "GAIA_STAR": _match_flag(objects, g[gaia.point_source_mask(g)]),
+        "GAIA_GALAXY": _match_flag(objects, gx[gaia_extragal.galaxy_mask(gx)]),
+        # purer Gaia QSOs: accounting/evaluation only, never a vote
+        "GAIA_QSO": _match_flag(objects, qs[gaia_extragal.qso_mask(qs)]),
         "LS_GALAXY": _match_flag(objects, ls[lsdr10.galaxy_mask(ls)]),
         "DR3_STAR": _match_flag(objects, d3[delvedr3.star_mask(d3)]),
         "DR3_GALAXY": _match_flag(objects, d3[delvedr3.galaxy_mask(d3)]),
@@ -120,11 +132,13 @@ def brick_labels(brickname: str, objects: pd.DataFrame | None = None) -> pd.Data
     })
 
     star_vote = prov["GAIA_STAR"] | prov["DR3_STAR"]
-    galaxy_vote = prov["LS_GALAXY"] | prov["DR3_GALAXY"] | prov["HST_GALAXY"]
+    galaxy_vote = (prov["GAIA_GALAXY"] | prov["LS_GALAXY"]
+                   | prov["DR3_GALAXY"] | prov["HST_GALAXY"])
     label = pd.Series(np.nan, index=objects.index, name="LABEL")
     label[star_vote & ~galaxy_vote] = STAR
     label[galaxy_vote & ~star_vote] = GALAXY
     label[star_vote & galaxy_vote] = CONFLICT
 
     out = pd.concat([objects[["BRICKNAME", "OBJID"]], label, prov], axis=1)
+    out["IN_MC_CORE"] = gaia_extragal.in_mc_core(objects["RA"], objects["DEC"])
     return out

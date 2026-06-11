@@ -53,19 +53,20 @@ def test_brick_dataset_periphery():
     assert len(df) > 0
     expected = [
         *dataset.ID_COLUMNS, "SPLIT", "HST_CONFLICT_RATE", "LABEL",
-        *assemble.PROVENANCE_COLUMNS, *features.FEATURE_COLUMNS,
+        *assemble.PROVENANCE_COLUMNS, "IN_MC_CORE", *features.FEATURE_COLUMNS,
     ]
     assert sorted(df.columns) == sorted(expected)
     assert df["LABEL"].isin([assemble.STAR, assemble.GALAXY]).all()
     assert (df["SPLIT"] == df["SPLIT"].iloc[0]).all()
-    # every labelled row is backed by at least one truth survey
-    backing = df[list(assemble.PROVENANCE_COLUMNS)].drop(columns="HST_BLEND")
+    # every labelled row is backed by at least one voting truth survey
+    # (HST_BLEND and GAIA_QSO are accounting-only flags, never votes)
+    backing = df[list(assemble.PROVENANCE_COLUMNS)].drop(
+        columns=["HST_BLEND", "GAIA_QSO"])
     assert backing.any(axis=1).all()
     # no star label co-claimed as galaxy survived (conflicts dropped)
     stars = df["LABEL"] == assemble.STAR
-    assert not (
-        df.loc[stars, ["LS_GALAXY", "DR3_GALAXY", "HST_GALAXY"]].any(axis=1).any()
-    )
+    galaxy_votes = ["GAIA_GALAXY", "LS_GALAXY", "DR3_GALAXY", "HST_GALAXY"]
+    assert not df.loc[stars, galaxy_votes].any(axis=1).any()
     assert df["RMAG0"].notna().mean() > 0.5
 
 

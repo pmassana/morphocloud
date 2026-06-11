@@ -77,6 +77,12 @@ DELVE-MC catalog values alone.
   as `CONTAINS(POINT, POLYGON(...))` via `LabelSource.geometry=True` (`id_col` dedup
   cleans the shared dec-edge of a split). It is fast (~13k rows/s: a 130k-row dense
   tile in ~57 s), `max_rows=500k`, COUNT-verified, `--shard I/N` parallelized.
+  The same service also fetches the **Gaia DR3 extragalactic tables** `"I/356/galcand"`
+  and `"I/356/qsocand"` (`gaia_galcand`/`gaia_qsocand` caches, `labels/gaia_extragal.py`):
+  purer-union cuts run server-side, so tiles are tiny (~419k galaxy + ~271k QSO purer
+  rows footprint-wide; raw would be 924k + 3.2M, dominated by MC contamination).
+  Caveat: a *negated* CONTAINS (e.g. "outside a circle") is unindexed and crawls —
+  exclusion geometry must be applied client-side or via inclusive counts.
 - **ESA Gaia archive TAP** (`esa_gaia` service, `GAIA_ESA`; primary 2026-06-10 day
   after Data Lab async downloads degraded to ~20–50 KB/s, demoted to fallback that
   evening): table `gaiadr3.gaia_source`, canonical lowercase columns (no rename).
@@ -177,6 +183,36 @@ Stream everything per brick / per sky chunk; never duplicate the DELVE-MC catalo
   training (nothing else labels the inner MCs), except a small holdout of interior
   pointings so release metrics can be quoted for the inner MCs, plus periphery
   fields for validation.
+- **Galaxies ← Gaia DR3 galaxy_candidates / QSO flags ← qso_candidates (Vizier
+  I/356)** — implemented 2026-06-10 (`labels/gaia_extragal.py`). The raw tables are
+  completeness-driven and unusable here (south of dec −44.875: 924k "galaxies" /
+  3.2M "QSOs", with 89k / 1.09M within 3° of the LMC center — misclassified
+  Magellanic stars; Gaia's DSC did no sky-position filtering). Only the release
+  paper's **purer** sub-samples are fetched (Gaia Collaboration, Bailer-Jones et
+  al. 2023, A&A 674, A41 — both union definitions verified 2026-06-10 to reproduce
+  the published counts *exactly* on Vizier: 2,891,132 galaxies / 1,942,825 quasars):
+  galaxies `radius_sersic IS NOT NULL OR classlabel_dsc_joint='galaxy' OR
+  vari_best_class_name='GALAXY'`; quasars `gaia_crf_source=1 OR host_galaxy_flag<6
+  OR classlabel_dsc_joint='quasar' OR vari_best_class_name='AGN'`. The paper's
+  ~95% purity excludes "generous regions" around the MCs — **LMC 9° around ICRS
+  (81.3, −68.7), SMC 6° around (16.0, −72.8)** (its appendix ADQL, verbatim) — and
+  the purer samples are still contaminated inside (purer-QSO density at the LMC is
+  ~10× the sky value; RR-Lyrae-classed "quasars" pass even the DSC-joint cut), so
+  both masks exclude the cores. Net labels: ~388k of 419k purer galaxies and 229k
+  of 271k purer QSOs survive the circles; the circles cover 16.9% of footprint
+  bricks, where Gaia-astrometry star labels and HST galaxy labels (crowding-robust)
+  still apply. Roles (**decided 2026-06-10**): `GAIA_GALAXY` is a galaxy *vote* —
+  the only wide-area galaxy source inside the MCs (though thin: ~700 purer labels
+  in the LMC core pre-cut, bright/extended-biased, Gaia G ≲ 21); `GAIA_QSO` is a
+  **provenance/evaluation flag only, never a vote** — the Tier 1 target is
+  morphological and QSOs are point sources (86% of purer southern QSOs pass the
+  `gaia_dr3` star cut, so their STAR labels are correct for this target). The flag
+  supports QSO-contamination metrics (12k purer QSOs behind the LMC) and downstream
+  masking; *physical* star-vs-extragalactic separation needs variability features
+  (per-band `SCATTER` is only a weak proxy) and is **deferred to a future
+  variable-source classifier** with time-series inputs. `IN_MC_CORE` (the same two
+  circles) is carried through assembly into the dataset for split evaluation of
+  the crowded cores.
 - Backend (implemented 2026-06-09): `tap.py` keeps a service registry (Data Lab +
   MAST, one cached `TAPService` each); `LabelSource.service` selects the endpoint and
   `LabelSource.max_rows` works around MAST's 100k-row hard cap (COUNT-verified,

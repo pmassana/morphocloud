@@ -1,7 +1,9 @@
 """Gaia DR3 star (point-source) labels.
 
 The label is morphological — point source vs extended — so QSOs passing the
-astrometric quality cuts are acceptable members of the point-source class.
+astrometric quality cuts are acceptable members of the point-source class
+(86% of the footprint's purer Gaia QSO candidates pass them; those objects
+carry the GAIA_QSO provenance flag from labels.gaia_extragal for evaluation).
 Known bias: Gaia is complete only to G ~ 20.5-21 and favors blue sources.
 
 Backend history:

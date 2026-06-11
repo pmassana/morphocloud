@@ -74,6 +74,7 @@ def brick_dataset(
     """Labelled, quality-cut feature rows for one brick.
 
     Columns: ID_COLUMNS, SPLIT, LABEL (1=star, 0=galaxy), provenance flags,
+    IN_MC_CORE (for split evaluation of the crowded MC cores),
     HST_CONFLICT_RATE (per-brick label-noise monitor), FEATURE_COLUMNS.
     Conflicting and unlabelled sources are excluded; needed label tiles are
     fetched on demand if not cached.
@@ -100,7 +101,7 @@ def brick_dataset(
     out = pd.concat(
         [
             objects.loc[keep, list(ID_COLUMNS)],
-            labels.loc[keep, ["LABEL", *assemble.PROVENANCE_COLUMNS]],
+            labels.loc[keep, ["LABEL", *assemble.PROVENANCE_COLUMNS, "IN_MC_CORE"]],
             feats.loc[keep],
         ],
         axis=1,
