@@ -17,9 +17,11 @@ completeness against COUNT(*) and split big queries (LabelSource.max_rows).
 from __future__ import annotations
 
 import time
+import warnings
 
 import pandas as pd
 import pyvo
+from pyvo.dal.exceptions import DALOverflowWarning
 
 SERVICES = {
     "datalab": "https://datalab.noirlab.edu/tap",
@@ -79,9 +81,16 @@ def query(adql: str, sync: bool = True, maxrec: int = 5_000_000,
           service: str = "datalab") -> pd.DataFrame:
     """Run an ADQL query; use sync=False for region fetches that may be large."""
     svc = _service(service)
-    result = (svc.run_sync(adql, maxrec=maxrec) if sync
-              else _run_async(svc, adql, maxrec))
-    return result.to_table().to_pandas()
+    with warnings.catch_warnings():
+        if service == "mast_hsc":
+            # MAST sets the overflow flag on complete results too, so pyvo's
+            # truncation warning is pure noise there; completeness is enforced
+            # by LabelSource.max_rows COUNT verification instead. Elsewhere
+            # the warning stays on — it would signal real truncation.
+            warnings.simplefilter("ignore", DALOverflowWarning)
+        result = (svc.run_sync(adql, maxrec=maxrec) if sync
+                  else _run_async(svc, adql, maxrec))
+        return result.to_table().to_pandas()
 
 
 def circle_condition(ra: float, dec: float, radius_deg: float,
