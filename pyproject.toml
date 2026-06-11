@@ -2,6 +2,8 @@
 name = "morphocloud"
 version = "0.1.0"
 description = "Star-galaxy classifier for the DELVE-MC survey"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
 dependencies = [
     "astropy>=6",
