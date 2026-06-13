@@ -11,8 +11,10 @@ reports/
 # fetch / build worker logs
 *.log
 
-# QA notebook (carries ~10MB of embedded cutout images; regenerable, local-only)
+# Analysis/QA notebooks (carry embedded plots/cutouts; regenerable, local-only)
 notebooks/qa_labels.ipynb
+notebooks/hsc_star_purity.ipynb
+notebooks/hsc_star_colourcolour.ipynb
 
 # python
 __pycache__/
