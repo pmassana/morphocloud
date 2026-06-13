@@ -84,7 +84,8 @@ def brick_dataset(
     feats = features.brick_features(brickname, objects)
 
     claims = labels["HST_GALAXY"]
-    star_vote = labels["GAIA_STAR"] | labels["DR3_STAR"]
+    star_vote = (labels["GAIA_STAR"] | labels["DR3_STAR"]
+                 | labels["LS_STAR"] | labels["HST_STAR"])
     conflict_rate = (
         float((claims & star_vote).sum() / claims.sum()) if claims.any() else 0.0
     )

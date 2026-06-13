@@ -35,6 +35,25 @@ LSDR10 = LabelSource(
 
 GALAXY_TYPES = ("DEV", "EXP", "SER")
 
+# Star labels from LS DR10's own PSF detections. Gaia-forced rows (ref_cat='GE')
+# are excluded server-side: they are Gaia positions re-listed (redundant with the
+# Gaia star labels) and dominate the otherwise-blank MC interior. Full depth (no
+# mag cut): LS PSF is the deepest star-label source, overtaking Gaia past r~21 and
+# DR3 past r~21.5 (see notebooks/hsc_star_colourcolour.ipynb). LS shares DECam
+# imaging with DELVE-MC, so these are a deeper *teacher*, not independent truth —
+# carry their own provenance flag (LS_STAR) and ablation-test the weight.
+LS_STAR = LabelSource(
+    name="ls_dr10_star",
+    table="ls_dr10.tractor",
+    columns=(
+        "ls_id", "ra", "dec", "type",
+        "dered_mag_g", "dered_mag_r", "dered_mag_i", "dered_mag_z",
+        "nobs_g", "nobs_r", "nobs_i", "nobs_z",
+    ),
+    where=("type='PSF' AND brick_primary=1 AND maskbits=0 AND nobs_r>=2 "
+           "AND (ref_cat IS NULL OR ref_cat != 'GE')"),
+)
+
 # Artifact-region mask: LS rows whose MASKBITS flags a bright-star/defect
 # region. The primary galaxy source above filters maskbits=0, so the masked
 # rows it needs are not in its cache — this is a separate fetch of the
@@ -82,3 +101,12 @@ def galaxy_mask(df: pd.DataFrame) -> pd.Series:
         & (df["maskbits"] == 0)
         & (nobs >= 2)
     )
+
+
+def star_mask(df: pd.DataFrame) -> pd.Series:
+    """LS DR10 PSF point sources. brick_primary / maskbits / GE exclusion are
+    applied server-side in LS_STAR.where (not stored), so only the checkable
+    cuts re-apply here."""
+    gtype = df["type"].astype(str).str.strip().str.upper()
+    nobs = df[["nobs_g", "nobs_r", "nobs_z"]].max(axis=1)
+    return (gtype == "PSF") & (nobs >= 2)

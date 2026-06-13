@@ -33,8 +33,8 @@ MASK_MATCH_ARCSEC = 1.0
 STAR, GALAXY, CONFLICT = 1, 0, -1
 
 PROVENANCE_COLUMNS = (
-    "GAIA_STAR", "GAIA_GALAXY", "GAIA_QSO", "LS_GALAXY",
-    "DR3_STAR", "DR3_GALAXY", "HST_GALAXY", "HST_BLEND",
+    "GAIA_STAR", "GAIA_GALAXY", "GAIA_QSO", "LS_GALAXY", "LS_STAR",
+    "DR3_STAR", "DR3_GALAXY", "HST_GALAXY", "HST_STAR", "HST_BLEND",
 )
 
 
@@ -115,14 +115,16 @@ def brick_labels(brickname: str, objects: pd.DataFrame | None = None) -> pd.Data
     gx = gaia_extragal.GALCAND.load(pixels)
     qs = gaia_extragal.QSOCAND.load(pixels)
     ls = lsdr10.LSDR10.load(pixels)
+    lst = lsdr10.LS_STAR.load(pixels)
     lm = lsdr10.LS_MASK.load(pixels)
     d3 = delvedr3.DELVEDR3.load(pixels)
     hs = hsc.HSC.load(pixels)
 
-    # the all-point-like flag is deliberately unused: point-like CI at faint
-    # magnitudes includes shredded-galaxy knots, so HSC gives no star labels
-    _, hst_galaxy, hst_blend = _component_flags(
-        objects, hs, hsc.point_source_mask(hs), hsc.galaxy_mask(hs),
+    # HSC stars: isolated, point-like, optically-detected components (blend-aware,
+    # like the galaxy side). Carries ~27% compact-galaxy contamination that no CI
+    # or colour cut removes, so it is a provenance-flagged, down-weightable vote.
+    hst_star, hst_galaxy, hst_blend = _component_flags(
+        objects, hs, hsc.star_candidate_mask(hs), hsc.galaxy_mask(hs),
         hsc.HSC.ra_col, hsc.HSC.dec_col,
     )
     prov = pd.DataFrame({
@@ -131,15 +133,19 @@ def brick_labels(brickname: str, objects: pd.DataFrame | None = None) -> pd.Data
         # purer Gaia QSOs: accounting/evaluation only, never a vote
         "GAIA_QSO": _match_flag(objects, qs[gaia_extragal.qso_mask(qs)]),
         "LS_GALAXY": _match_flag(objects, ls[lsdr10.galaxy_mask(ls)]),
+        # LS PSF stars (full depth, Gaia-forced excluded): deepest star source
+        "LS_STAR": _match_flag(objects, lst[lsdr10.star_mask(lst)]),
         "DR3_STAR": _match_flag(objects, d3[delvedr3.star_mask(d3)]),
         "DR3_GALAXY": _match_flag(objects, d3[delvedr3.galaxy_mask(d3)]),
         "HST_GALAXY": hst_galaxy,
+        "HST_STAR": hst_star,
         # matched to HST but mixed/ambiguous components: never labelled,
         # kept for accounting
         "HST_BLEND": hst_blend,
     })
 
-    star_vote = prov["GAIA_STAR"] | prov["DR3_STAR"]
+    star_vote = (prov["GAIA_STAR"] | prov["DR3_STAR"]
+                 | prov["LS_STAR"] | prov["HST_STAR"])
     galaxy_vote = (prov["GAIA_GALAXY"] | prov["LS_GALAXY"]
                    | prov["DR3_GALAXY"] | prov["HST_GALAXY"])
     label = pd.Series(np.nan, index=objects.index, name="LABEL")
