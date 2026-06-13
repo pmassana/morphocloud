@@ -1,9 +1,12 @@
 """Tier 1 baseline: out-of-core XGBoost star/galaxy classifier.
 
-Streams the labelled parquet in row-group batches via an xgboost DataIter, so
-the full 93M-row table never lives in RAM (peak is one batch plus the quantized
-histogram matrix, ~2 GB). Trains a histogram GBDT on the photometric and
-morphological features, early-stopping on the spatially disjoint val split.
+Streams the labelled parquet in row-group batches via an xgboost DataIter into
+an ExtMemQuantileDMatrix, which bins each batch and spills it to an on-disk page
+cache (released from RAM). Peak memory is one raw batch plus the resident
+histogram pages, independent of table size -- needed since the LS/HSC-augmented
+table is ~169M rows and the in-core QuantileDMatrix no longer fits 18 GB. Trains
+a histogram GBDT on the photometric and morphological features, early-stopping
+on the spatially disjoint val split.
 
 Two column groups are deliberately NOT model inputs:
   - NDET<band>: counts how many times a source was observed, a survey-cadence /
@@ -20,15 +23,19 @@ later steps. Usage:
 
     python scripts/train_baseline.py [--rounds N] [--batch-size N]
                                      [--threads N] [--out PATH]
+                                     [--dmatrix extmem|incore]
 
 --threads sets the CPU cores used for both quantization and training
-(-1, the default, uses all cores).
+(-1, the default, uses all cores). --dmatrix picks the matrix backend:
+extmem (default) bins to an on-disk cache and bounds RAM; incore holds the
+whole binned matrix in RAM (faster when RAM >> dataset or the disk is slow).
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import time
 
 import numpy as np
@@ -49,7 +56,7 @@ PARAMS = {
     "eval_metric": ["auc", "logloss"],
     "tree_method": "hist",
     "max_depth": 8,
-    "eta": 0.1,
+    "eta": 0.3,   # XGBoost default; 0.1 converged too slowly (marginal, unstable)
     "subsample": 0.8,
     "colsample_bytree": 0.8,
     "min_child_weight": 20.0,
@@ -65,7 +72,8 @@ class ParquetSplitIter(xgb.DataIter):
     memory at once.
     """
 
-    def __init__(self, path, split, features, batch_size=2_000_000, progress=True):
+    def __init__(self, path, split, features, batch_size=2_000_000,
+                 progress=True, cache_prefix=None, release_data=True):
         self._pf = pq.ParquetFile(path)
         self._split = split
         self._features = list(features)
@@ -75,12 +83,17 @@ class ParquetSplitIter(xgb.DataIter):
         self._progress = progress
         self._rows = 0       # split rows emitted in the current pass
         self._t0 = None      # wall-clock start of the current pass
-        # release_data=False: with the default, xgboost frees this iterator's
-        # cached batches once the cuts are built, which silently breaks the
-        # train matrix as soon as the val matrix is constructed with ref=train
-        # (training then makes zero splits). Keeping the data bounds memory to
-        # one batch, not the whole table.
-        super().__init__(release_data=False)
+        # Two modes set release_data/cache_prefix from train():
+        #  - extmem (ExtMemQuantileDMatrix): cache_prefix set, release_data=True
+        #    -> each batch is binned, spilled to the on-disk cache (on_host=False
+        #    forces the filesystem) and freed from RAM. Peak memory is one raw
+        #    batch + resident histogram pages, independent of table size.
+        #  - in-core (QuantileDMatrix): cache_prefix=None, release_data=False
+        #    -> the default (True) frees this iterator's batches once cuts are
+        #    built, which silently breaks the val matrix built with ref=dtrain
+        #    (training then makes zero splits).
+        super().__init__(cache_prefix=cache_prefix, release_data=release_data,
+                         on_host=False)
 
     def reset(self):
         self._batches = self._pf.iter_batches(
@@ -120,20 +133,46 @@ class ParquetSplitIter(xgb.DataIter):
         return False
 
 
-def train(rounds, batch_size, out_path, nthread=-1):
+def train(rounds, batch_size, out_path, nthread=-1, extmem=True):
     cores = nthread if nthread > 0 else "all"
     print(f"features ({len(MODEL_FEATURES)}): {', '.join(MODEL_FEATURES)}")
     print(f"excluded as inputs: {', '.join(EXCLUDE_FEATURES)} + provenance flags")
-    print(f"cpu cores: {cores}\n")
+    print(f"cpu cores: {cores}  |  dmatrix: {'extmem' if extmem else 'incore'}\n")
 
     t0 = time.time()
-    train_it = ParquetSplitIter(DATASET_PATH, "train", MODEL_FEATURES, batch_size)
-    val_it = ParquetSplitIter(DATASET_PATH, "val", MODEL_FEATURES, batch_size)
-
-    print("quantizing train split (streamed)...", flush=True)
-    dtrain = xgb.QuantileDMatrix(train_it, nthread=nthread)
-    print("quantizing val split (streamed)...", flush=True)
-    dval = xgb.QuantileDMatrix(val_it, ref=dtrain, nthread=nthread)
+    max_bin = PARAMS["max_bin"]
+    cache_dir = None
+    if extmem:
+        # RAM-bounded: bin each batch and spill to an on-disk page cache. Best
+        # for small RAM / fast SSD. release_data=True frees raw batches.
+        cache_dir = DATASET_PATH.parent / "extmem_cache"
+        if cache_dir.exists():
+            shutil.rmtree(cache_dir)
+        cache_dir.mkdir(parents=True)
+        train_it = ParquetSplitIter(DATASET_PATH, "train", MODEL_FEATURES,
+                                    batch_size, cache_prefix=str(cache_dir / "train"))
+        val_it = ParquetSplitIter(DATASET_PATH, "val", MODEL_FEATURES,
+                                  batch_size, cache_prefix=str(cache_dir / "val"))
+        print("building train ExtMemQuantileDMatrix (binned cache -> disk)...", flush=True)
+        dtrain = xgb.ExtMemQuantileDMatrix(train_it, nthread=nthread, max_bin=max_bin)
+        print("building val ExtMemQuantileDMatrix...", flush=True)
+        dval = xgb.ExtMemQuantileDMatrix(val_it, ref=dtrain, nthread=nthread,
+                                         max_bin=max_bin)
+    else:
+        # In-core: the whole binned matrix lives in RAM (faster, no disk I/O per
+        # round). Use when RAM >> dataset or the disk is slow (e.g. a 64 GB
+        # server with an HDD). release_data=False is required here -- the default
+        # frees the iterator's batches once cuts are built, which silently breaks
+        # the val matrix built with ref=dtrain (training then makes zero splits).
+        train_it = ParquetSplitIter(DATASET_PATH, "train", MODEL_FEATURES,
+                                    batch_size, release_data=False)
+        val_it = ParquetSplitIter(DATASET_PATH, "val", MODEL_FEATURES,
+                                  batch_size, release_data=False)
+        print("quantizing train split (in-core, streamed)...", flush=True)
+        dtrain = xgb.QuantileDMatrix(train_it, nthread=nthread, max_bin=max_bin)
+        print("quantizing val split (in-core, streamed)...", flush=True)
+        dval = xgb.QuantileDMatrix(val_it, ref=dtrain, nthread=nthread,
+                                   max_bin=max_bin)
 
     # class balance read off the built matrices (reliable; the iterator's own
     # tallies are unsafe because xgboost may reset it after the final pass)
@@ -191,6 +230,9 @@ def train(rounds, batch_size, out_path, nthread=-1):
     for name, score in sorted(gain.items(), key=lambda kv: -kv[1])[:12]:
         print(f"  {name:14s} {score:12.1f}")
 
+    if cache_dir is not None:
+        shutil.rmtree(cache_dir, ignore_errors=True)  # reclaim the on-disk cache
+
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
@@ -204,8 +246,16 @@ def main():
         "--out", default=str(MODELS_DIR / "baseline_xgb.json"),
         help="model output path (.json)",
     )
+    ap.add_argument(
+        "--dmatrix", choices=["extmem", "incore"], default="extmem",
+        help="extmem (default): RAM-bounded, bins to an on-disk page cache -- "
+             "best for small RAM and/or a fast SSD. incore: holds the whole "
+             "binned matrix in RAM (faster, no per-round disk I/O) -- use when "
+             "RAM >> dataset or the disk is slow (e.g. a 64 GB server with HDD).",
+    )
     args = ap.parse_args()
-    train(args.rounds, args.batch_size, args.out, args.nthread)
+    train(args.rounds, args.batch_size, args.out, args.nthread,
+          extmem=(args.dmatrix == "extmem"))
 
 
 if __name__ == "__main__":
