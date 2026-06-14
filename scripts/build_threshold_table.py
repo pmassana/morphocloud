@@ -38,6 +38,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -195,10 +196,16 @@ def main():
     tab.to_csv(out, index=False)
     plot_table(tab, REPORTS / "threshold_table.png")
 
+    # Sibling artifact next to the weights: travels with the model (same stem as
+    # .meta/.calibrator) so infer.StarGalaxyClassifier.load() can pick it up and
+    # it can't drift from the calibrated outputs it was derived from.
+    sib = Path(args.model.replace(".json", ".thresholds.csv"))
+    tab.to_csv(sib, index=False)
+
     pd.set_option("display.width", 240, "display.max_columns", 40)
     print("=== per-magnitude threshold table (calibrated P_star) ===")
     print(tab.round(3).to_string(index=False))
-    print(f"\ntable -> {out}")
+    print(f"\ntable -> {out}\n      -> {sib}  (bundled with weights)")
     print("\nleak* = galaxy->star FPR cap (trustworthy); compl = star TPR kept.")
     print("pur*  = star purity at THIS sample's base rate (star-heavy); for a")
     print("catalog bin with star fraction pi use")

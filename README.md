@@ -157,8 +157,29 @@ python scripts/predict_brick.py 0002m587 --out-dir preds/          # FITS
 python scripts/predict_brick.py 0002m587 0003m587 --format parquet
 ```
 
-Output columns: `BRICKNAME`, `OBJID`, `RA`, `DEC`, `BRICKUNIQ`, `P_STAR` (calibrated),
-`P_STAR_RAW`, and `QUALITY_PASS`.
+Output columns: `BRICKNAME`, `OBJID`, `RA`, `DEC`, `BRICKUNIQ`, `RMAG0`
+(extinction-corrected r), `P_STAR` (calibrated), `P_STAR_RAW`, and `QUALITY_PASS`.
+
+**Turning `P_STAR` into a star/galaxy decision.** At a flat `P_STAR >= 0.5` the
+star-heavy training base rate makes the model over-call stars faint-ward, so use
+the per-magnitude operating points instead. The table ships beside the weights as
+`baseline_lshsc_xgb.thresholds.csv` and is loaded automatically; `threshold_for`
+returns the calibrated-`P_STAR` cut for an extinction-corrected r magnitude:
+
+```python
+import numpy as np
+cut = clf.threshold_for(df["RMAG0"], target="leak1")   # galaxy->star leak <=1%
+cut = np.where(np.isfinite(cut), cut, 0.5)             # r<20 / out-of-table -> flat 0.5
+df["STAR"] = df["P_STAR"] >= cut
+```
+
+`threshold_for` returns NaN outside the table's range (r ≲ 20, where separation
+is trivial and a flat 0.5 is already clean, or r ≳ 25, past the validity floor) —
+fall back to 0.5 as above. Targets: `leak0.5` / `leak1` / `leak2` (galaxy→star
+leak caps, base-rate-free and the trustworthy controls) and `pur95` / `pur99`
+(star-purity points at the star-heavy test base rate). Per-bin numbers and the
+recover-purity-at-your-π formula are in
+[`docs/model_card.md`](docs/model_card.md) §6.2.
 
 ## Reproducing the pipeline
 

@@ -23,22 +23,36 @@ from . import bricks, features
 from .config import MODELS_DIR
 from .dataset import quality_mask
 
-DEFAULT_MODEL = MODELS_DIR / "baseline_xgb.json"
+DEFAULT_MODEL = MODELS_DIR / "baseline_lshsc_xgb.json"
 
 
 class StarGalaxyClassifier:
     """The released baseline: raw XGBoost score + isotonic calibration to P(star)."""
 
-    def __init__(self, booster, feature_names, best_iteration, cal_x, cal_y):
+    # Operating-point -> threshold-table column. leak* cap the galaxy->star leak
+    # (base-rate-free, the trustworthy controls); pur* are this test sample's
+    # star-heavy purity points. See scripts/build_threshold_table.py.
+    OPERATING_POINTS = {
+        "leak0.5": "t_leak0p5", "leak1": "t_leak1", "leak2": "t_leak2",
+        "pur95": "t_pur95", "pur99": "t_pur99",
+    }
+
+    def __init__(self, booster, feature_names, best_iteration, cal_x, cal_y,
+                 thresholds=None):
         self.booster = booster
         self.features = list(feature_names)
         self.best_iteration = int(best_iteration)
         self.cal_x = np.asarray(cal_x, dtype=np.float64)
         self.cal_y = np.asarray(cal_y, dtype=np.float64)
+        # Per-magnitude operating-point table (sibling .thresholds.csv), or None
+        # if it wasn't bundled with the weights. classify_brick stays unchanged
+        # and only emits P_STAR; threshold_for() reads this on demand.
+        self.thresholds = thresholds
 
     @classmethod
     def load(cls, model_path=DEFAULT_MODEL):
-        """Load model, feature list/best-iteration (.meta.json) and calibrator."""
+        """Load model, feature list/best-iteration (.meta.json), calibrator and,
+        if present, the per-magnitude threshold table (.thresholds.csv)."""
         model_path = Path(model_path)
         with open(model_path.with_suffix(".meta.json")) as fh:
             meta = json.load(fh)
@@ -46,10 +60,44 @@ class StarGalaxyClassifier:
         booster.load_model(str(model_path))
         with open(model_path.with_suffix(".calibrator.json")) as fh:
             cal = json.load(fh)
+        thr_path = model_path.with_suffix(".thresholds.csv")
+        thresholds = pd.read_csv(thr_path) if thr_path.exists() else None
         return cls(
             booster, meta["features"], meta["best_iteration"],
-            cal["x_thresholds"], cal["y_thresholds"],
+            cal["x_thresholds"], cal["y_thresholds"], thresholds,
         )
+
+    def threshold_for(self, r_mag, target="leak1"):
+        """Per-magnitude calibrated-P_STAR cut for an operating point.
+
+        The new default model over-calls stars at a flat p>=0.5 faint-ward, so a
+        usable star/galaxy decision is `P_STAR >= threshold_for(RMAG0)`. `r_mag`
+        is the extinction-corrected r magnitude (scalar or array-like); `target`
+        is one of OPERATING_POINTS (default 'leak1' = galaxy->star leak <=1%, the
+        README headline). Returns NaN where r is outside the table's bins or the
+        bin had too few truth sources to set a number.
+        """
+        if self.thresholds is None:
+            raise RuntimeError(
+                "no threshold table bundled with this model "
+                "(expected a sibling .thresholds.csv next to the weights)"
+            )
+        if target not in self.OPERATING_POINTS:
+            raise ValueError(
+                f"unknown target {target!r}; choose from "
+                f"{sorted(self.OPERATING_POINTS)}"
+            )
+        tab = self.thresholds
+        col = self.OPERATING_POINTS[target]
+        r_in = np.asarray(r_mag, dtype=np.float64)
+        r = np.atleast_1d(r_in)
+        r_lo, r_hi = tab["r_lo"].to_numpy(), tab["r_hi"].to_numpy()
+        # idx[i] = row whose [r_lo, r_hi) bin contains r[i]; -1 if below all bins.
+        idx = np.searchsorted(r_lo, r, side="right") - 1
+        valid = (idx >= 0) & (r < r_hi[np.clip(idx, 0, len(tab) - 1)])
+        out = np.full(r.shape, np.nan, dtype=np.float64)
+        out[valid] = tab[col].to_numpy()[idx[valid]]
+        return out if r_in.ndim else float(out[0])
 
     def predict_proba(self, feats: pd.DataFrame):
         """Return (raw_score, calibrated P(star)) for a FEATURE_COLUMNS frame.
@@ -68,16 +116,19 @@ class StarGalaxyClassifier:
     def classify_brick(self, brickname: str, unique_only: bool = False) -> pd.DataFrame:
         """Per-source classification table for one brick.
 
-        Columns: BRICKNAME, OBJID, RA, DEC, BRICKUNIQ, P_STAR (calibrated),
-        P_STAR_RAW, QUALITY_PASS. QUALITY_PASS marks the >=2-good-band cut the
-        model was trained under: rows that fail it get a probability anyway but
-        are outside the validated regime. unique_only=False keeps every source
-        (BRICKUNIQ rides along for cross-brick dedup downstream).
+        Columns: BRICKNAME, OBJID, RA, DEC, BRICKUNIQ, RMAG0, P_STAR
+        (calibrated), P_STAR_RAW, QUALITY_PASS. RMAG0 (extinction-corrected r) is
+        carried so threshold_for() can be applied to the output directly.
+        QUALITY_PASS marks the >=2-good-band cut the model was trained under:
+        rows that fail it get a probability anyway but are outside the validated
+        regime. unique_only=False keeps every source (BRICKUNIQ rides along for
+        cross-brick dedup downstream).
         """
         objects = bricks.read_objects(brickname, unique_only=unique_only)
         feats = features.brick_features(brickname, objects)
         raw, prob = self.predict_proba(feats)
         out = objects[["BRICKNAME", "OBJID", "RA", "DEC", "BRICKUNIQ"]].copy()
+        out["RMAG0"] = feats["RMAG0"].to_numpy(dtype=np.float32)
         out["P_STAR"] = prob.astype(np.float32)
         out["P_STAR_RAW"] = raw.astype(np.float32)
         out["QUALITY_PASS"] = quality_mask(objects).to_numpy()
