@@ -156,10 +156,47 @@ never trained on in those fields (`scripts/evaluate_faint_hst.py`,
 
 The training set is now **star-heavy (≈ 72 % stars)**, so calibrated `P_STAR` sits on a
 high base rate and a flat `P_STAR > 0.5` **over-calls stars at the faint end** (at p≥0.5,
-faint galaxy→star leak grows past r ≈ 23). The recommended operating mode is a
-**magnitude- (ideally magnitude×seeing-) dependent threshold** chosen for a target
-purity — a flat 0.5 cut is appropriate bright-ward only. A per-magnitude threshold table
-is the main open release item.
+faint galaxy→star leak grows past r ≈ 23). The fix is a **magnitude-dependent threshold**:
+`scripts/build_threshold_table.py` tabulates, per r-mag bin, the calibrated-`P_STAR`
+threshold that meets a chosen target on the held-out HSC-truth sample (test split,
+outside the MC cores) → `reports/threshold_table.csv`, `docs/figures/threshold_table.png`.
+
+Two threshold families are tabulated:
+
+- **Leak-controlled (recommended, base-rate-robust):** the threshold capping the
+  galaxy→star leak — the fraction of true (HSC) galaxies called star, i.e. the false
+  positive rate — at 0.5 / 1 / 2 %. This rests only on the **reliable** HSC galaxy truth
+  and is independent of the star:galaxy mix, so it transfers to the real catalog.
+- **Purity-target:** the threshold reaching 95 / 99 % star purity *on the eval sample*.
+  Because purity = TP/(TP+FP) depends on the base rate and this HSC selection is
+  star-heavy, these are the **test-set** operating points; for a catalog bin with star
+  fraction π, recover purity from the leak columns via
+  `purity(π) = π·TPR / (π·TPR + (1−π)·FPR)` (TPR = the tabulated completeness, FPR = the
+  leak target).
+
+Headline operating point — **galaxy→star leak ≤ 1 %** (≈ 99 % star purity near a balanced
+base rate). The star completeness it preserves falls steeply faint-ward — that is the
+physical limit, not a tuning artifact:
+
+| r bin | `P_STAR` threshold (leak ≤ 1 %) | star completeness kept |
+|---|---|---|
+| r < 20.5 | flat 0.5 (model ≈ 0.998 pure) | ≈ 1.00 |
+| 21.0–21.5 | ≈ 0.86 | 0.72 |
+| 22.0–22.5 | ≈ 0.93 | 0.62 |
+| 22.5–23.0 | ≈ 0.98 | 0.31 |
+| 23.0–23.5 | ≈ 0.98 | 0.27 |
+| 23.5–24.0 | ≈ 1.00 | 0.04 |
+
+So past r ≈ 23 a high-purity star sample keeps only a small, bright-biased fraction of the
+true stars; below that, demanding star purity means accepting near-zero completeness
+(DECam resolution floor, §6.1). Bright-ward (r < 20.5) the flat 0.5 cut is appropriate.
+
+> Caveat — the per-bin numbers come from a few hundred HSC galaxies each (so individual
+> thresholds are noisy at the ~0.05 level), HSC *star* truth is ~few % galaxy-leaky (the
+> reported completeness is therefore a slight under-count), and the implied-purity base
+> rate `pi_catalog` carried in the CSV is a **test-split proxy** (itself partly DR3-
+> distilled faint-ward), **not** a measured catalog rate. Treat the table as the operating
+> guide and the leak-controlled columns as the trustworthy ones.
 
 ### 6.3 On the DR3 `spread_model` reference baseline
 
@@ -179,7 +216,8 @@ CLI: `python scripts/predict_brick.py BRICK [BRICK ...] --out-dir preds/`
 (`--format fits|parquet`). Output carries `P_STAR` (calibrated), `P_STAR_RAW`,
 `BRICKUNIQ`, and `QUALITY_PASS` (the ≥2-good-band training cut — rows that fail it still
 get a probability but lie outside the validated regime). **For a high-purity sample apply
-a magnitude-dependent threshold rather than a flat `P_STAR > 0.5` (§6.2).**
+the magnitude-dependent threshold from `reports/threshold_table.csv` rather than a flat
+`P_STAR > 0.5` (§6.2).**
 
 ## 8. Limitations & open items
 
@@ -189,8 +227,10 @@ a magnitude-dependent threshold rather than a flat `P_STAR > 0.5` (§6.2).**
   star purity therefore cannot be externally certified.
 - **Resolution floor at r ≳ 23.5:** catalog features cannot separate point-like compact
   galaxies from stars at this depth — fundamentally a Tier 2 (image-based) problem.
-- **Per-magnitude operating-threshold table not yet built** (§6.2) — the main step from
-  "better discriminator" to a usable high-purity faint sample.
+- **Operating threshold is magnitude-of-r only** (§6.2): seeing and colour dependence are
+  not yet folded into the table, and the per-bin thresholds are HSC-statistics-limited
+  (~few hundred galaxies/bin) with a test-split base-rate proxy — refine on the true
+  catalog base rate when a larger faint-truth sample is available.
 - **DR3 distillation not yet ablated;** **MC cores under-masked** (LS is Gaia-forced-only
   there); **no artifact/OOD class** (use the quality flag + a future OOD score).
 - **Compute:** the 169 M-row dataset does not fit the development laptop's RAM in-core;
@@ -208,4 +248,6 @@ a magnitude-dependent threshold rather than a flat `P_STAR > 0.5` (§6.2).**
 | `src/morphocloud/infer.py`, `scripts/predict_brick.py` | inference library + CLI |
 | `scripts/train_baseline.py`, `scripts/evaluate_baseline.py` | training, calibration + evaluation |
 | `scripts/evaluate_faint_hst.py` | faint-end evaluation vs the baseline on HSC truth |
+| `scripts/build_threshold_table.py` | per-magnitude operating-threshold table (§6.2) |
+| `reports/threshold_table.csv`, `docs/figures/threshold_table.png` | the threshold table + figure |
 | `docs/figures/`, `reports/` | evaluation figures, summaries, curves |

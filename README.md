@@ -99,9 +99,12 @@ per-colour/seeing breakdowns and biases are in [`docs/model_card.md`](docs/model
 - **20.5 ≲ r ≲ 23 — reliable, but tune the threshold.** Separation is strong (the model
   beats the baseline and the classic cuts here), but the released probabilities sit on a
   **star-heavy base rate** (≈ 76 % of training labels are stars), so a flat `P_STAR > 0.5`
-  *over-calls* stars at the faint end. **Use a magnitude- (ideally magnitude×seeing-)
-  dependent threshold** for a target purity — e.g. ~0.94 calibrated probability buys ~99 %
-  star purity globally. A flat 0.5 cut is fine bright-ward, not faint-ward.
+  *over-calls* stars at the faint end. **Use the magnitude-dependent threshold table**
+  (`reports/threshold_table.csv`, `scripts/build_threshold_table.py`): per r-mag bin it
+  gives the `P_STAR` cut that caps galaxy→star leak at 0.5/1/2 % (≈ 99 % star purity near a
+  balanced base rate), with the star completeness it preserves. The completeness falls
+  steeply faint-ward (≈ 0.72 at r ≈ 21.25 → ≈ 0.27 at r ≈ 23.25 at the 1 % leak point) —
+  the physical limit. A flat 0.5 cut is fine bright-ward, not faint-ward.
 - **r ≳ 23.5 — low confidence.** Point-like compact galaxies are not separable from stars
   with catalog features at this depth (the DECam ground-based resolution floor), and there
   is **no independent faint star truth** in/near the MCs to validate against, so faint-end
@@ -194,8 +197,8 @@ Labels are streamed/fetched on demand by sky chunk — the DELVE-MC catalog is n
 
 Tier 1 (catalog-based GBDT baseline) is complete: dataset → training → calibration →
 evaluation → packaging, now including LS DR10 PSF and HSC isolated-source **faint star
-labels**. Open items: a per-magnitude operating-threshold table for release, and a
-DR3-distillation ablation. Tier 2/3 (image-based and foundation-model classifiers) are
+labels** and a per-magnitude operating-threshold table (`reports/threshold_table.csv`).
+Open item: a DR3-distillation ablation. Tier 2/3 (image-based and foundation-model classifiers) are
 future work.
 
 ## License
