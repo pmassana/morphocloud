@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 
 import numpy as np
 import pandas as pd
@@ -36,7 +37,12 @@ def load_model(path):
         meta = json.load(fh)
     bst = xgb.Booster()
     bst.load_model(path)
-    return bst, meta["features"], meta["best_iteration"]
+    cal = None
+    cal_path = path.replace(".json", ".calibrator.json")
+    if os.path.exists(cal_path):
+        c = json.load(open(cal_path))
+        cal = (np.asarray(c["x_thresholds"]), np.asarray(c["y_thresholds"]))
+    return bst, meta["features"], meta["best_iteration"], cal
 
 
 def main():
@@ -45,8 +51,8 @@ def main():
     ap.add_argument("--base", default="models/baseline_xgb.json")
     args = ap.parse_args()
 
-    bst_new, feats, it_new = load_model(args.new)
-    bst_base, feats_b, it_base = load_model(args.base)
+    bst_new, feats, it_new, cal_new = load_model(args.new)
+    bst_base, feats_b, it_base, cal_base = load_model(args.base)
     cols = sorted(set(feats) | set(feats_b) |
                   {"SPLIT", "HST_STAR", "HST_GALAXY", "IN_MC_CORE", "RMAG0"})
     # push down: test split AND an HSC label
@@ -61,11 +67,13 @@ def main():
     print(f"eval rows (test, non-core, HSC-labelled): {len(df):,} "
           f"({int((y==1).sum()):,} star / {int((y==0).sum()):,} galaxy)")
 
-    def pstar(bst, fe, it):
+    def pstar(bst, fe, it, cal):
         d = xgb.DMatrix(df[fe].to_numpy(np.float32), feature_names=fe)
-        return bst.predict(d, iteration_range=(0, it + 1))
-    p_new = pstar(bst_new, feats, it_new)
-    p_base = pstar(bst_base, feats_b, it_base)
+        raw = bst.predict(d, iteration_range=(0, it + 1))
+        return np.interp(raw, cal[0], cal[1]) if cal is not None else raw
+    print(f"calibration applied: new={cal_new is not None}, base={cal_base is not None}")
+    p_new = pstar(bst_new, feats, it_new, cal_new)
+    p_base = pstar(bst_base, feats_b, it_base, cal_base)
 
     bins = np.arange(20, 25.01, 0.5)
     rmag = df["RMAG0"].to_numpy()
