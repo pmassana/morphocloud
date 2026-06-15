@@ -1,4 +1,4 @@
-"""Tier 1 release: classify DELVE-MC brick(s) into a calibrated P(star).
+"""Classify DELVE-MC brick(s) into a calibrated P(star).
 
 Thin CLI over morphocloud.infer.StarGalaxyClassifier. Writes one output table
 per brick (FITS by default, parquet with --format parquet) carrying the

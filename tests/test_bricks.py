@@ -1,4 +1,4 @@
-"""Smoke tests for the brick readers against the real y4t2 catalogs."""
+"""Smoke tests for the brick readers against the real DR1 catalogs."""
 
 import numpy as np
 import pytest

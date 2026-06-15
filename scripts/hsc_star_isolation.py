@@ -1,6 +1,6 @@
 """How many HSC point-like (candidate star) sources survive a 0.5" isolation cut.
 
-Motivation: the Tier 1 model's star purity falls after r~23 because Gaia is the
+Motivation: the model's star purity falls after r~23 because Gaia is the
 only faint star-label source. HSC could add faint stars inside/near the MCs, but
 HST resolves blends DECam sees as one source, so an HSC "star" sitting inside a
 crowded clump would be a bad DECam star label. The proposed guard: drop any

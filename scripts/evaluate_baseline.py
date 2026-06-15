@@ -1,14 +1,14 @@
-"""Tier 1 baseline: calibrate (step 5) and evaluate (step 6) the XGBoost model.
+"""Calibrate and evaluate the XGBoost star/galaxy model.
 
-Two roadmap steps in one streamed pass over the held-out splits:
+Two steps in one streamed pass over the held-out splits:
 
-  step 5 - CALIBRATION. The trainer used scale_pos_weight, so the raw model
+  CALIBRATION. The trainer used scale_pos_weight, so the raw model
     scores are tilted away from posterior probabilities. We fit an isotonic
     regression on the spatially-disjoint VAL split (raw score -> observed star
     fraction) and serialize it as interpolation knots, so the released
     inference path is a dependency-light np.interp with no sklearn at runtime.
 
-  step 6 - EVALUATION on the untouched, spatially-disjoint TEST split:
+  EVALUATION on the untouched, spatially-disjoint TEST split:
     - purity (precision) & completeness (recall) for the star class vs r-mag,
       colour and seeing, at the calibrated p=0.5 operating point;
     - ROC-AUC / PR-AUC / Brier, raw vs calibrated;
@@ -261,7 +261,7 @@ def main():
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     print(f"model {args.model}  best_iter={best_iter}  {len(features)} features\n")
 
-    # ---- step 5: fit isotonic calibrator on the VAL split --------------------
+    # ---- fit isotonic calibrator on the VAL split ----------------------------
     print("streaming VAL split for calibration...")
     val = stream_split(booster, best_iter, DATASET_PATH, "val", features,
                        (), args.batch_size)
@@ -280,7 +280,7 @@ def main():
     print(f"  calibrator -> {cal_path}")
     print(f"  val Brier  raw {val_brier_raw:.5f} -> cal {val_brier_cal:.5f}\n")
 
-    # ---- step 6: evaluate on the held-out TEST split -------------------------
+    # ---- evaluate on the held-out TEST split ---------------------------------
     print("streaming TEST split for evaluation...")
     test = stream_split(booster, best_iter, DATASET_PATH, "test", features,
                         EXTRA_COLS, args.batch_size)

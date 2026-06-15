@@ -69,7 +69,7 @@ LS_STAR = LabelSource(
 # data (an object can carry these alongside real artifact bits):
 #   0  NPRIMARY - brick-edge bookkeeping; set even on brick_primary sources
 #   11 MEDIUM   - medium-bright star halo (Gaia G<16); too much footprint for
-#                 a mild halo (Pol's call 2026-06-11), not treated as artifact
+#                 a mild halo, not treated as artifact
 #   12 GALAXY   - real SGA large galaxy
 #   13 CLUSTER  - real globular cluster (e.g. 47 Tuc blankets the SMC tile)
 #   16 SUB_BLOB - deblending bookkeeping, not a defect

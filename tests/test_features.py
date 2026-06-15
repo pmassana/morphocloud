@@ -1,4 +1,4 @@
-"""Feature extraction tests against the real y4t2 catalogs."""
+"""Feature extraction tests against the real DR1 catalogs."""
 
 import pandas as pd
 import pytest

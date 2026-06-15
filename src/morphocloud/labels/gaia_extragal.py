@@ -33,13 +33,13 @@ Roles (locked 2026-06-10, details in docs/plan.md):
   galaxy source inside the MCs (LS DR10 / DELVE DR3 are blind there), though
   thin in the cores even before the circle cut (~700 purer labels in the LMC
   9-deg core) and biased to bright extended galaxies (Gaia G <~ 21).
-- QSOCAND → provenance/evaluation flag ONLY, never a label vote. The Tier 1
+- QSOCAND → provenance/evaluation flag ONLY, never a label vote. The model's
   target is morphological (point vs extended) and QSOs are point sources:
   86% of purer southern QSOs pass the gaia_dr3 star cut, so they are correct
   members of the point-source class. The flag enables QSO-contamination
   measurements (12k purer QSOs behind the LMC alone) and downstream masking.
-  Physical star-vs-extragalactic separation needs variability features and
-  is deferred to a future variable-source classifier.
+  Physical star-vs-extragalactic separation needs variability features and is
+  outside the scope of this morphological classifier.
 """
 
 from __future__ import annotations

@@ -1,8 +1,8 @@
 """Inference: a calibrated stellar probability from DELVE-MC catalog rows alone.
 
-Loads the released XGBoost baseline plus its isotonic calibrator and turns a
+Loads the released XGBoost model plus its isotonic calibrator and turns a
 brick's object catalog into a per-source P(star). Every input is a DELVE-MC
-y4t2 column or a per-brick exposure-metadata value (features.brick_features) -
+DR1 column or a per-brick exposure-metadata value (features.brick_features) -
 no truth catalog, including DELVE DR3, is ever read - so inference runs
 anywhere the object files are present.
 

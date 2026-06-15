@@ -3,11 +3,10 @@
 A reliable **star/galaxy classifier for the DELVE-MC survey**. morphocloud produces a
 calibrated *stellar probability* for each source from catalog photometry and morphology
 alone — no images, no external catalog at inference time — so it runs anywhere the
-DELVE-MC (y4t2) brick catalogs are present.
+DELVE-MC DR1 brick catalogs are present.
 
-The current deliverable is **Tier 1**: a gradient-boosted decision tree (XGBoost) baseline
-with calibrated probabilities. It is the strong, fast, releasable starting point, ahead of
-any image-based or foundation-model work (Tier 2/3).
+It is a gradient-boosted decision tree (XGBoost) classifier with calibrated probabilities:
+strong, fast, and runnable directly on catalog data.
 
 ## What it does
 
@@ -158,17 +157,20 @@ catalogs from disk. Point morphocloud at them via environment variables — noth
 machine-specific ships in the package:
 
 ```bash
-export MORPHOCLOUD_DELVEMC_DATA=/path/to/delvemc_y4t2
+export MORPHOCLOUD_DELVEMC_DATA=/path/to/delvemc_dr1
 export MORPHOCLOUD_BRICK_LIST=/path/to/delvemc_bricks_0.25deg.fits.gz
 ```
 
+`MORPHOCLOUD_DELVEMC_DATA` is a directory holding, for each brick `<BRICKNAME>`, the
+object catalog `<BRICKNAME>_object.fits.gz` and the per-exposure metadata
+`<BRICKNAME>_meta.fits` (e.g. `0002m587_object.fits.gz`, `0002m587_meta.fits`).
 In-memory inference (below) needs none of these.
 
 ## Usage — inference on any catalog
 
 Inference runs on **any** table that carries the model features — a pandas `DataFrame`,
-an astropy `Table`, or a numpy structured array — so you don't need Pol's on-disk brick
-layout. Build the feature columns from your raw DELVE-MC columns with `engineer_features`
+an astropy `Table`, or a numpy structured array — so no on-disk brick layout is required.
+Build the feature columns from your raw DELVE-MC columns with `engineer_features`
 (it's path-free: catalog + the brick's median seeing in arcsec), then score:
 
 ```python
@@ -255,19 +257,10 @@ Labels are streamed/fetched on demand by sky chunk — the DELVE-MC catalog is n
 |---|---|
 | `src/morphocloud/` | package: brick readers, features, label assembly, dataset, TAP clients, inference |
 | `scripts/` | CLIs: `fetch_labels`, `build_dataset`, `train_baseline`, `evaluate_baseline`, `evaluate_faint_hst`, `predict_brick` |
-| `docs/plan.md` | Tier 1 plan, data conventions, locked decisions |
 | `docs/model_card.md` | model card: intended use, training data, biases, evaluation, limitations |
 | `docs/figures/` | evaluation figures shown above |
 | `tests/` | unit tests (`pytest`) |
 | `models/`, `reports/`, `data/` | model artifacts, evaluation outputs, datasets (all gitignored) |
-
-## Status & roadmap
-
-Tier 1 (catalog-based GBDT baseline) is complete: dataset → training → calibration →
-evaluation → packaging, now including LS DR10 PSF and HSC isolated-source **faint star
-labels** and a per-magnitude operating-threshold table (`reports/threshold_table.csv`).
-Open item: a DR3-distillation ablation. Tier 2/3 (image-based and foundation-model classifiers) are
-future work.
 
 ## License
 

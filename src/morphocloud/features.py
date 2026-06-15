@@ -7,7 +7,7 @@ XGBoost handles them natively.
 
 `engineer_features` is path-free (a catalog frame plus a seeing scalar in, the
 FEATURE_COLUMNS frame out), so anyone with a table of the raw DELVE-MC columns
-can build model inputs without Pol's local brick files; `brick_features` is the
+can build model inputs without any local brick files; `brick_features` is the
 thin wrapper that reads those files and the per-brick seeing for local use.
 """
 
@@ -44,7 +44,7 @@ FEATURE_COLUMNS = tuple(
 
 # Raw catalog columns engineer_features consumes (so callers know the contract):
 # per-band photometry, the SFD reddening, the morphology columns, the coadd FWHM
-# and MAG_AUTO. These are DELVE-MC y4t2 object-file columns.
+# and MAG_AUTO. These are DELVE-MC DR1 object-file columns.
 RAW_INPUT_COLUMNS = tuple(
     [f"{b}{suffix}" for b in CORE_BANDS for suffix in ("MAG", "ERR", "SCATTER")]
     + [f"NDET{b}" for b in CORE_BANDS]
@@ -87,7 +87,7 @@ def _concentration(objects: pd.DataFrame) -> pd.Series:
     """MAG_AUTO-vs-PSF concentration, anchored per brick.
 
     MAG_AUTO is on the coadd's instrumental zero point — offsets of several
-    magnitudes that vary brick to brick (verified on y4t2: -4.4 vs -5.9 mag
+    magnitudes that vary brick to brick (verified on DR1: -4.4 vs -5.9 mag
     on two test bricks) — so the raw MAG_AUTO - PSF difference is not
     comparable across bricks. Per band, the median difference of bright
     point-like anchor stars is subtracted (removes the zero point and the
@@ -121,7 +121,7 @@ def engineer_features(objects: pd.DataFrame, seeing: float) -> pd.DataFrame:
     Path-free: `objects` is any frame carrying RAW_INPUT_COLUMNS and `seeing`
     is the brick's median seeing in arcsec (the FWHM normalizer). Use this to
     build model inputs from any DELVE-MC catalog table — no local brick files
-    needed. `brick_features` wraps it for Pol's on-disk bricks.
+    needed. `brick_features` wraps it for on-disk bricks.
     """
     out: dict[str, object] = {}
     for band in CORE_BANDS:

@@ -1,4 +1,4 @@
-"""Tier 1 baseline: out-of-core XGBoost star/galaxy classifier.
+"""Out-of-core XGBoost star/galaxy classifier.
 
 Streams the labelled parquet in row-group batches via an xgboost DataIter into
 an ExtMemQuantileDMatrix, which bins each batch and spills it to an on-disk page

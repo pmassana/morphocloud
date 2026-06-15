@@ -1,6 +1,9 @@
 CLAUDE.md
 .claude/
 
+# internal planning notes (local-only)
+docs/plan.md
+
 # data products (kept out of git; ~100GB local budget)
 data/
 models/

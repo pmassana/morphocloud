@@ -1,4 +1,4 @@
-"""Build the per-magnitude operating-point threshold table (Tier 1 release).
+"""Build the per-magnitude operating-point threshold table for the release.
 
 The LS+HSC model is a better faint discriminator than the old baseline, but at a
 flat calibrated p>=0.5 the star-heavy training base rate makes it over-call stars

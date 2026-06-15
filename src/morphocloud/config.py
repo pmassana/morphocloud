@@ -1,11 +1,11 @@
-"""Paths and catalog conventions for the DELVE-MC y4t2 release.
+"""Paths and catalog conventions for the DELVE-MC DR1 release.
 
 The local-data paths are read from the environment so no machine-specific path
 ships in the package. Inference on a catalog you already have in memory needs
 none of them; only the on-disk brick workflows (fetching, dataset assembly,
 ``bricks``/``classify_brick``) do. Set, in your shell profile:
 
-    export MORPHOCLOUD_DELVEMC_DATA=/path/to/delvemc_y4t2
+    export MORPHOCLOUD_DELVEMC_DATA=/path/to/delvemc_dr1
     export MORPHOCLOUD_BRICK_LIST=/path/to/delvemc_bricks_0.25deg.fits.gz
     export MORPHOCLOUD_MODELS_DIR=/path/to/weights   # optional; default: repo models/
 """
@@ -38,7 +38,7 @@ def require_delvemc_data() -> Path:
     """The local brick-catalog dir, or a clear error if it isn't configured."""
     if DELVEMC_DATA is None:
         raise RuntimeError(
-            "set MORPHOCLOUD_DELVEMC_DATA to your DELVE-MC y4t2 brick directory "
+            "set MORPHOCLOUD_DELVEMC_DATA to your DELVE-MC DR1 brick directory "
             "(only the on-disk brick workflows need it; in-memory inference does not)"
         )
     return DELVEMC_DATA
@@ -52,7 +52,7 @@ def require_brick_list() -> Path:
         )
     return BRICK_LIST
 
-# Catalog conventions (verified against y4t2 object files)
+# Catalog conventions (verified against DR1 object files)
 # - photometry columns: <BAND>MAG/<BAND>ERR/<BAND>SCATTER/NDET<BAND>, BAND in
 #   present-by-brick subsets of {U, G, R, I, Z, Y}; g/r/i are near-complete,
 #   z mostly present, u/Y patchy. Column sets VARY per brick.

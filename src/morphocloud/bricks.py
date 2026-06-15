@@ -1,4 +1,4 @@
-"""Readers for the DELVE-MC y4t2 brick catalogs.
+"""Readers for the DELVE-MC DR1 brick catalogs.
 
 Object files are DAOPHOT/ALLFRAME products whose band columns vary per brick
 (g/r/i/z mostly present, u/Y patchy). `read_objects` normalizes every brick to

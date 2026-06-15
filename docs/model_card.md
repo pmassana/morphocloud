@@ -1,7 +1,7 @@
-# Model card — morphocloud Tier 1 star/galaxy baseline
+# Model card — morphocloud star/galaxy classifier
 
 **Model:** `models/baseline_lshsc_xgb.json` (+ `.meta.json`, `.calibrator.json`)
-**Version:** Tier 1 baseline + faint-end star labels, trained 2026-06-14
+**Version:** 1.0.0 — faint-end star labels, trained 2026-06-14
 **Type:** Gradient-boosted decision trees (XGBoost, `binary:logistic`) with isotonic
 probability calibration
 **Output:** `P_STAR` ∈ [0, 1] — calibrated probability that a DELVE-MC source is a star
@@ -16,17 +16,16 @@ probability calibration
 
 ## 1. Intended use
 
-Produce a calibrated stellar probability for DELVE-MC (y4t2) catalog sources from
-**catalog photometry and morphology alone**, as a fast, releasable baseline for
-star/galaxy separation across the DELVE-MC footprint.
+Produce a calibrated stellar probability for DELVE-MC DR1 catalog sources from
+**catalog photometry and morphology alone**, for fast star/galaxy separation across the
+DELVE-MC footprint.
 
 - **In scope:** point-source vs extended classification of DELVE-MC sources that pass
   the quality cut (≥2 of g/r/i detected with err < 0.5), in the magnitude/colour/seeing
   range where the model is validated (§6).
 - **Out of scope:** physical QSO/AGN identification (QSOs are point sources here and are
-  *not* separated — deferred to a future variable-source classifier); sources fainter
-  than the validated regime (r ≳ 23.5); surveys other than DELVE-MC y4t2 without
-  re-validation.
+  *not* separated); sources fainter than the validated regime (r ≳ 23.5); surveys other
+  than DELVE-MC DR1 without re-validation.
 
 Inference reads **only DELVE-MC columns** (object catalog + per-brick exposure
 metadata). No truth catalog — including DELVE DR3 — is ever an input.
@@ -232,23 +231,20 @@ For local on-disk bricks (with `MORPHOCLOUD_DELVEMC_DATA` set) there is a conven
 `P_STAR_RAW`, `BRICKUNIQ`, and `QUALITY_PASS` (the ≥2-good-band training cut — rows that fail
 it still get a probability but lie outside the validated regime).
 
-## 8. Limitations & open items
+## 8. Limitations
 
 - **Faint star labels are teacher labels, not independent truth:** LS PSF shares DECam
   imaging with DELVE-MC; HSC isolated point sources carry ~27 % compact-galaxy
   contamination (not separable by CI or colour); DR3 distils another classifier. Faint
   star purity therefore cannot be externally certified.
 - **Resolution floor at r ≳ 23.5:** catalog features cannot separate point-like compact
-  galaxies from stars at this depth — fundamentally a Tier 2 (image-based) problem.
+  galaxies from stars at this depth — fundamentally an image-based problem, outside the
+  scope of a catalog-only classifier.
 - **Operating threshold is magnitude-of-r only** (§6.2): seeing and colour dependence are
-  not yet folded into the table, and the per-bin thresholds are HSC-statistics-limited
-  (~few hundred galaxies/bin) with a test-split base-rate proxy — refine on the true
-  catalog base rate when a larger faint-truth sample is available.
-- **DR3 distillation not yet ablated;** **MC cores under-masked** (LS is Gaia-forced-only
-  there); **no artifact/OOD class** (use the quality flag + a future OOD score).
-- **Compute:** the 169 M-row dataset does not fit the development laptop's RAM in-core;
-  `--dmatrix extmem` is RAM-safe but disk-bound there (~2 min/round). Retrain on a
-  larger-RAM host with `--dmatrix incore`, or on a stratified subsample.
+  not folded into the table, and the per-bin thresholds are HSC-statistics-limited
+  (~few hundred galaxies/bin) with a test-split base-rate proxy.
+- **MC cores are under-masked** for artifacts (LS is Gaia-forced-only there), and there is
+  **no dedicated artifact/out-of-distribution class** — use the quality flag to gate input.
 
 ## 9. Files
 
