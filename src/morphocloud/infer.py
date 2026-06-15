@@ -72,8 +72,15 @@ class StarGalaxyClassifier:
     @classmethod
     def load(cls, model_path=DEFAULT_MODEL):
         """Load model, feature list/best-iteration (.meta.json), calibrator and,
-        if present, the per-magnitude threshold table (.thresholds.csv)."""
+        if present, the per-magnitude threshold table (.thresholds.csv).
+
+        When called with no path and the bundled/dev default isn't on disk, the
+        released weights are downloaded once to a user cache (see weights.py)."""
         model_path = Path(model_path)
+        if not model_path.exists() and model_path == DEFAULT_MODEL:
+            from . import weights
+
+            model_path = weights.fetch_weights()
         with open(model_path.with_suffix(".meta.json")) as fh:
             meta = json.load(fh)
         booster = xgb.Booster()

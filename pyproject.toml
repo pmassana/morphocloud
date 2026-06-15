@@ -2,9 +2,19 @@
 name = "morphocloud"
 version = "1.0.0"
 description = "Star-galaxy classifier for the DELVE-MC survey"
+readme = "README.md"
+authors = [{ name = "Pol Massana", email = "tenacergames@gmail.com" }]
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.11"
+keywords = ["astronomy", "star-galaxy-classification", "DELVE", "photometry", "xgboost"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Astronomy",
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
 # Inference only: load the released weights and score a catalog. The fetch and
 # train pipelines pull extra packages via the optional groups below.
 dependencies = [
@@ -21,6 +31,11 @@ fetch = ["pyvo", "scipy", "healpy"]
 train = ["scikit-learn>=1.3", "matplotlib", "pyarrow", "healpy", "tqdm"]
 dev = ["pytest", "ruff"]
 all = ["morphocloud[fetch,train,dev]"]
+
+[project.urls]
+Homepage = "https://github.com/pmassana/morphocloud"
+Repository = "https://github.com/pmassana/morphocloud"
+Issues = "https://github.com/pmassana/morphocloud/issues"
 
 [build-system]
 requires = ["hatchling"]

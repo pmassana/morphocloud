@@ -50,11 +50,13 @@ pip install "morphocloud[all]"     # everything
 
 > On macOS, XGBoost needs OpenMP: `conda install llvm-openmp`.
 
-**Get the model weights.** Download the four `baseline_lshsc_xgb.*` files
-(`.json`, `.meta.json`, `.calibrator.json`, `.thresholds.csv`) from the
-[v1.0.0 release](https://github.com/pmassana/morphocloud/releases/tag/v1.0.0) into a
-directory, then either set `MORPHOCLOUD_MODELS_DIR` to it or pass the path to
-`StarGalaxyClassifier.load(model_path=…)`.
+**Model weights download automatically.** The first time you call
+`StarGalaxyClassifier.load()`, the four `baseline_lshsc_xgb.*` files
+(`.json`, `.meta.json`, `.calibrator.json`, `.thresholds.csv`) are fetched from the
+[v1.0.0 release](https://github.com/pmassana/morphocloud/releases/tag/v1.0.0) to a
+local cache (`~/.cache/morphocloud/`, checksum-verified) and reused thereafter. To
+use your own copy instead, set `MORPHOCLOUD_MODELS_DIR` to the directory holding them
+or pass `StarGalaxyClassifier.load(model_path=…)`.
 
 **Local brick workflows only** (`classify_brick`, fetching, training) read the DELVE-MC
 catalogs from disk. Point morphocloud at them via environment variables — nothing
@@ -81,7 +83,7 @@ Build the feature columns from your raw DELVE-MC columns with `engineer_features
 from morphocloud.features import engineer_features, RAW_INPUT_COLUMNS, FEATURE_COLUMNS
 from morphocloud.infer import StarGalaxyClassifier
 
-clf = StarGalaxyClassifier.load(model_path="weights/baseline_lshsc_xgb.json")
+clf = StarGalaxyClassifier.load()   # downloads weights on first use, then caches
 
 # `catalog` is any DataFrame / astropy Table holding RAW_INPUT_COLUMNS
 feats = engineer_features(catalog, seeing=1.1)   # seeing in arcsec (FWHM normalizer)

@@ -22,6 +22,8 @@ notebooks/hsc_star_colourcolour.ipynb
 # python
 __pycache__/
 *.egg-info/
+build/
+dist/
 .ipynb_checkpoints/
 .pytest_cache/
 .ruff_cache/
