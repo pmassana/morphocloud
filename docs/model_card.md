@@ -98,9 +98,11 @@ Isotonic regression fit on the val split (raw score → observed star fraction),
 serialized as interpolation knots in `baseline_lshsc_xgb.calibrator.json`. Runtime
 application is `np.interp(raw, x, y)` — no sklearn dependency. It corrects the
 `scale_pos_weight` tilt (val Brier 0.0325 → 0.0284; test calibrated Brier 0.026 full /
-0.028 external) and brings the reliability curve onto the diagonal
-(`docs/figures/reliability.png`). Calibration is monotonic, so it does **not** change the
-star/galaxy ranking or fix the operating-point issue in §6.2.
+0.028 external) and brings the reliability curve onto the diagonal. Calibration is
+monotonic, so it does **not** change the star/galaxy ranking or fix the operating-point
+issue in §6.2.
+
+![Reliability](figures/reliability.png)
 
 ## 6. Evaluation (held-out, spatially-disjoint test split, ≈ 25 M sources)
 
@@ -123,6 +125,8 @@ the calibrated threshold for **99 % star purity** is ≈ 0.94 (full; → 91 % co
 or ≈ 0.96 (external; → 99 % completeness). Full tables: `reports/eval_summary.json`,
 `reports/purity_completeness.csv`.
 
+![ROC](figures/roc.png) ![Feature importance](figures/feature_importance.png)
+
 ### 6.1 Faint end — validated against independent HST truth
 
 The point of this model version. Evaluated on **HSC (HST) classifications** the model
@@ -137,6 +141,8 @@ never trained on in those fields (`scripts/evaluate_faint_hst.py`,
   vs 0.77).
 - At a **fixed 95 % star purity** (threshold-independent), faint completeness improves
   where stars are recoverable, e.g. **r ≈ 22.25: 0.93 vs 0.79**.
+
+![Faint-end star/galaxy separation vs the Gaia-only baseline (HSC truth)](figures/faint_hst_eval.png)
 
 **Validity ranges:**
 
@@ -158,7 +164,9 @@ high base rate and a flat `P_STAR > 0.5` **over-calls stars at the faint end** (
 faint galaxy→star leak grows past r ≈ 23). The fix is a **magnitude-dependent threshold**:
 `scripts/build_threshold_table.py` tabulates, per r-mag bin, the calibrated-`P_STAR`
 threshold that meets a chosen target on the held-out HSC-truth sample (test split,
-outside the MC cores) → `reports/threshold_table.csv`, `docs/figures/threshold_table.png`.
+outside the MC cores) → `reports/threshold_table.csv`.
+
+![Per-magnitude operating-point thresholds](figures/threshold_table.png)
 
 Two threshold families are tabulated:
 
