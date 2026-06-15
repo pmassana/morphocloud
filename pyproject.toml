@@ -1,25 +1,26 @@
 [project]
 name = "morphocloud"
-version = "0.1.0"
+version = "1.0.0"
 description = "Star-galaxy classifier for the DELVE-MC survey"
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.11"
+# Inference only: load the released weights and score a catalog. The fetch and
+# train pipelines pull extra packages via the optional groups below.
 dependencies = [
-    "astropy>=6",
-    "astroquery>=0.4.7",
     "numpy",
     "pandas",
-    "pyarrow",
-    "scikit-learn>=1.3",
+    "astropy>=6",
     "xgboost>=2",
-    "healpy",
-    "matplotlib",
-    "tqdm",
 ]
 
 [project.optional-dependencies]
+# Fetch truth labels over TAP and tile the sky (labels/*, tap.py).
+fetch = ["pyvo", "scipy", "healpy"]
+# Assemble the training set and train/calibrate/evaluate the model.
+train = ["scikit-learn>=1.3", "matplotlib", "pyarrow", "healpy", "tqdm"]
 dev = ["pytest", "ruff"]
+all = ["morphocloud[fetch,train,dev]"]
 
 [build-system]
 requires = ["hatchling"]

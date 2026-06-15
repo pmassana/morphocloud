@@ -7,7 +7,8 @@ from morphocloud import bricks
 from morphocloud.config import CORE_BANDS, DELVEMC_DATA
 
 pytestmark = pytest.mark.skipif(
-    not DELVEMC_DATA.exists(), reason="DELVE-MC catalogs not on this machine"
+    DELVEMC_DATA is None or not DELVEMC_DATA.exists(),
+    reason="DELVE-MC catalogs not on this machine",
 )
 
 # 0002m587 has Y-band columns; 0830m680 (dense, LMC) has no Y at all

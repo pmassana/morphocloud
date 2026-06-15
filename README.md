@@ -127,23 +127,86 @@ that fail it still receive a probability but lie outside the validated range.
 
 ## Installation
 
-Requires Python ≥ 3.11. From the repo root:
+Requires Python ≥ 3.11. The base install pulls **only the inference dependencies**
+(`numpy`, `pandas`, `astropy`, `xgboost`):
 
 ```bash
 conda create -n morphocloud python=3.11
 conda activate morphocloud
-pip install -e .          # add ".[dev]" for pytest + ruff
+pip install morphocloud            # or `pip install -e .` from a clone
+```
+
+The fetch and train pipelines are opt-in extras:
+
+```bash
+pip install "morphocloud[fetch]"   # TAP truth-label fetching (pyvo, scipy, healpy)
+pip install "morphocloud[train]"   # dataset assembly + training (scikit-learn, matplotlib, …)
+pip install "morphocloud[dev]"     # pytest + ruff
+pip install "morphocloud[all]"     # everything
 ```
 
 > On macOS, XGBoost needs OpenMP: `conda install llvm-openmp`.
 
-Two things inference needs that are **not** in the repo:
-- **The DELVE-MC y4t2 brick catalogs** (object FITS files). Their location is set in
-  [`src/morphocloud/config.py`](src/morphocloud/config.py) (`DELVEMC_DATA`).
-- **The trained model artifacts** (`*.json`, `*.meta.json`, `*.calibrator.json`; gitignored —
-  obtain the released weights, or reproduce them with the pipeline below).
+**Get the model weights.** Download the four `baseline_lshsc_xgb.*` files
+(`.json`, `.meta.json`, `.calibrator.json`, `.thresholds.csv`) from the
+[v1.0.0 release](https://github.com/pmassana/morphocloud/releases/tag/v1.0.0) into a
+directory, then either set `MORPHOCLOUD_MODELS_DIR` to it or pass the path to
+`StarGalaxyClassifier.load(model_path=…)`.
 
-## Usage — classify a brick
+**Local brick workflows only** (`classify_brick`, fetching, training) read the DELVE-MC
+catalogs from disk. Point morphocloud at them via environment variables — nothing
+machine-specific ships in the package:
+
+```bash
+export MORPHOCLOUD_DELVEMC_DATA=/path/to/delvemc_y4t2
+export MORPHOCLOUD_BRICK_LIST=/path/to/delvemc_bricks_0.25deg.fits.gz
+```
+
+In-memory inference (below) needs none of these.
+
+## Usage — inference on any catalog
+
+Inference runs on **any** table that carries the model features — a pandas `DataFrame`,
+an astropy `Table`, or a numpy structured array — so you don't need Pol's on-disk brick
+layout. Build the feature columns from your raw DELVE-MC columns with `engineer_features`
+(it's path-free: catalog + the brick's median seeing in arcsec), then score:
+
+```python
+from morphocloud.features import engineer_features, RAW_INPUT_COLUMNS, FEATURE_COLUMNS
+from morphocloud.infer import StarGalaxyClassifier
+
+clf = StarGalaxyClassifier.load(model_path="weights/baseline_lshsc_xgb.json")
+
+# `catalog` is any DataFrame / astropy Table holding RAW_INPUT_COLUMNS
+feats = engineer_features(catalog, seeing=1.1)   # seeing in arcsec (FWHM normalizer)
+p_star = clf.predict(feats)                       # calibrated P(star), one per row
+```
+
+If you already have the `FEATURE_COLUMNS` engineered, skip `engineer_features` and pass
+your table straight to `clf.predict(table)` — a DataFrame, astropy `Table`, and structured
+array all give identical results. `RAW_INPUT_COLUMNS` / `FEATURE_COLUMNS` document the
+contracts.
+
+**Turning `P_STAR` into a star/galaxy decision (smooth threshold).** The star-heavy
+training base rate makes a flat `P_STAR >= 0.5` over-call stars faint-ward, so cut on a
+magnitude-dependent threshold instead. `smooth_threshold` fits a smooth curve `T(r)` (in
+logit space, from the bundled per-magnitude table) and returns a callable with a single
+`strictness` dial — tighten (`>0`) or loosen (`<0`) the cut everywhere:
+
+```python
+threshold_for = clf.smooth_threshold(operating_point="leak1")   # galaxy->star leak <=1%
+rmag0 = feats["RMAG0"].to_numpy()                                # extinction-corrected r
+star = p_star >= threshold_for(rmag0, strictness=0.0, flat=0.5)  # flat 0.5 outside table r
+```
+
+Operating points: `leak0.5` / `leak1` / `leak2` (galaxy→star leak caps, base-rate-free and
+the trustworthy controls) and `pur95` / `pur99` (star-purity points at the star-heavy test
+base rate). `threshold_for(rmag0, target=…)` gives the raw step-table lookup if you prefer
+it to the smooth curve.
+
+## Usage — classify a local brick
+
+With `MORPHOCLOUD_DELVEMC_DATA` set, score a brick straight from its files:
 
 ```python
 from morphocloud.infer import StarGalaxyClassifier
@@ -160,25 +223,9 @@ python scripts/predict_brick.py 0002m587 0003m587 --format parquet
 Output columns: `BRICKNAME`, `OBJID`, `RA`, `DEC`, `BRICKUNIQ`, `RMAG0`
 (extinction-corrected r), `P_STAR` (calibrated), `P_STAR_RAW`, and `QUALITY_PASS`.
 
-**Turning `P_STAR` into a star/galaxy decision.** At a flat `P_STAR >= 0.5` the
-star-heavy training base rate makes the model over-call stars faint-ward, so use
-the per-magnitude operating points instead. The table ships beside the weights as
-`baseline_lshsc_xgb.thresholds.csv` and is loaded automatically; `threshold_for`
-returns the calibrated-`P_STAR` cut for an extinction-corrected r magnitude:
-
-```python
-import numpy as np
-cut = clf.threshold_for(df["RMAG0"], target="leak1")   # galaxy->star leak <=1%
-cut = np.where(np.isfinite(cut), cut, 0.5)             # r<20 / out-of-table -> flat 0.5
-df["STAR"] = df["P_STAR"] >= cut
-```
-
-`threshold_for` returns NaN outside the table's range (r ≲ 20, where separation
-is trivial and a flat 0.5 is already clean, or r ≳ 25, past the validity floor) —
-fall back to 0.5 as above. Targets: `leak0.5` / `leak1` / `leak2` (galaxy→star
-leak caps, base-rate-free and the trustworthy controls) and `pur95` / `pur99`
-(star-purity points at the star-heavy test base rate). Per-bin numbers and the
-recover-purity-at-your-π formula are in
+Apply `smooth_threshold` (or the `threshold_for` step lookup) to `df["RMAG0"]` and
+`df["P_STAR"]` exactly as in *inference on any catalog* above to get a star/galaxy
+decision. Per-bin numbers and the recover-purity-at-your-π formula are in
 [`docs/model_card.md`](docs/model_card.md) §6.2.
 
 ## Reproducing the pipeline

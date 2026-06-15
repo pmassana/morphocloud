@@ -14,7 +14,8 @@ PERIPHERY, SMC_BAR = "0496m662", "0135m725"
 
 needs_data = pytest.mark.skipif(
     not (
-        DELVEMC_DATA.exists()
+        DELVEMC_DATA is not None
+        and DELVEMC_DATA.exists()
         and (DATA_DIR / "labels/hsc_v3/hp32-08298.parquet").exists()
         and (DATA_DIR / "labels/hsc_v3/hp32-08329.parquet").exists()
         and (DATA_DIR / "labels/ls_dr10_mask/hp32-08298.parquet").exists()

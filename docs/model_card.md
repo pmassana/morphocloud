@@ -206,18 +206,31 @@ surviving rows). Not informative; a real comparison requires the dropped-conflic
 
 ## 7. How to run inference
 
+Inference is path-free and input-agnostic: build the features from any DELVE-MC catalog
+table (pandas `DataFrame`, astropy `Table`, or numpy structured array) and score it.
+
 ```python
+from morphocloud.features import engineer_features   # path-free feature builder
 from morphocloud.infer import StarGalaxyClassifier
-clf = StarGalaxyClassifier.load("models/baseline_lshsc_xgb.json")  # model + calibrator
-df = clf.classify_brick("0002m587")            # BRICKNAME, OBJID, RA, DEC, P_STAR, ...
+clf = StarGalaxyClassifier.load("baseline_lshsc_xgb.json")   # model + calibrator + table
+
+feats = engineer_features(catalog, seeing=1.1)               # seeing in arcsec
+p_star = clf.predict(feats)                                  # calibrated P(star)
+threshold_for = clf.smooth_threshold(operating_point="leak1")  # smooth T(r) cut
+star = p_star >= threshold_for(feats["RMAG0"].to_numpy(), flat=0.5)
 ```
 
-CLI: `python scripts/predict_brick.py BRICK [BRICK ...] --out-dir preds/`
-(`--format fits|parquet`). Output carries `P_STAR` (calibrated), `P_STAR_RAW`,
-`BRICKUNIQ`, and `QUALITY_PASS` (the ≥2-good-band training cut — rows that fail it still
-get a probability but lie outside the validated regime). **For a high-purity sample apply
-the magnitude-dependent threshold from `reports/threshold_table.csv` rather than a flat
-`P_STAR > 0.5` (§6.2).**
+`smooth_threshold` fits the per-magnitude operating-point table (§6.2) to a smooth curve in
+logit space and returns `threshold_for(rmag0, strictness=0.0, flat=None)` (a `strictness`
+dial tightens/loosens the cut everywhere); `threshold_for(rmag0, target=…)` is the raw
+step-table lookup. **For a high-purity sample always cut on this magnitude-dependent
+threshold rather than a flat `P_STAR > 0.5` (§6.2).**
+
+For local on-disk bricks (with `MORPHOCLOUD_DELVEMC_DATA` set) there is a convenience path:
+`clf.classify_brick("0002m587")` and the CLI `python scripts/predict_brick.py BRICK [BRICK …]
+--out-dir preds/` (`--format fits|parquet`). Output carries `RMAG0`, `P_STAR` (calibrated),
+`P_STAR_RAW`, `BRICKUNIQ`, and `QUALITY_PASS` (the ≥2-good-band training cut — rows that fail
+it still get a probability but lie outside the validated regime).
 
 ## 8. Limitations & open items
 
@@ -239,11 +252,16 @@ the magnitude-dependent threshold from `reports/threshold_table.csv` rather than
 
 ## 9. Files
 
+The four `baseline_lshsc_xgb.*` weight files are distributed as **v1.0.0 release assets**
+(not committed to git); download them and point `StarGalaxyClassifier.load(model_path=…)`
+or `MORPHOCLOUD_MODELS_DIR` at them.
+
 | File | Contents |
 |---|---|
 | `models/baseline_lshsc_xgb.json` | XGBoost model (LS/HSC faint-star-label version) |
 | `models/baseline_lshsc_xgb.meta.json` | feature list, params, training counts, best iteration |
 | `models/baseline_lshsc_xgb.calibrator.json` | isotonic calibration knots |
+| `models/baseline_lshsc_xgb.thresholds.csv` | per-magnitude operating-point threshold table (§6.2) |
 | `models/baseline_xgb.*` | previous Gaia-only baseline (kept for comparison) |
 | `src/morphocloud/infer.py`, `scripts/predict_brick.py` | inference library + CLI |
 | `scripts/train_baseline.py`, `scripts/evaluate_baseline.py` | training, calibration + evaluation |

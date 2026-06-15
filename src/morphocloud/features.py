@@ -4,6 +4,11 @@ Every feature derives only from the brick object columns and the brick's own
 exposure metadata, so inference runs from the DELVE-MC catalog alone (truth
 catalogs, including DELVE DR3, are never inputs). Missing values stay NaN —
 XGBoost handles them natively.
+
+`engineer_features` is path-free (a catalog frame plus a seeing scalar in, the
+FEATURE_COLUMNS frame out), so anyone with a table of the raw DELVE-MC columns
+can build model inputs without Pol's local brick files; `brick_features` is the
+thin wrapper that reads those files and the per-brick seeing for local use.
 """
 
 from __future__ import annotations
@@ -36,6 +41,31 @@ FEATURE_COLUMNS = tuple(
     + ["CHI", "SHARP", "PROB", "ELLIPTICITY", "ASEMI", "BSEMI",
        "SEEING", "FWHM_RATIO", "CONC"]
 )
+
+# Raw catalog columns engineer_features consumes (so callers know the contract):
+# per-band photometry, the SFD reddening, the morphology columns, the coadd FWHM
+# and MAG_AUTO. These are DELVE-MC y4t2 object-file columns.
+RAW_INPUT_COLUMNS = tuple(
+    [f"{b}{suffix}" for b in CORE_BANDS for suffix in ("MAG", "ERR", "SCATTER")]
+    + [f"NDET{b}" for b in CORE_BANDS]
+    + ["EBV", "CHI", "SHARP", "PROB", "ELLIPTICITY", "ASEMI", "BSEMI",
+       "FWHM", "MAG_AUTO"]
+)
+
+# quality cut: detected with a sane error in >= MIN_GOOD_BANDS of g/r/i. Shared
+# by the dataset builder and inference (StarGalaxyClassifier emits QUALITY_PASS).
+QUALITY_BANDS = ("G", "R", "I")
+MAX_BAND_ERR = 0.5
+MIN_GOOD_BANDS = 2
+
+
+def quality_mask(objects: pd.DataFrame) -> pd.Series:
+    """Sources detected with a sane error in >= MIN_GOOD_BANDS of g/r/i."""
+    good = sum(
+        ((objects[f"NDET{b}"] > 0) & (objects[f"{b}ERR"] < MAX_BAND_ERR)).astype(int)
+        for b in QUALITY_BANDS
+    )
+    return good >= MIN_GOOD_BANDS
 
 
 def brick_seeing(brickname: str) -> float:
@@ -85,14 +115,14 @@ def _concentration(objects: pd.DataFrame) -> pd.Series:
     return conc - conc[point_like & in_range].median()
 
 
-def brick_features(
-    brickname: str, objects: pd.DataFrame | None = None
-) -> pd.DataFrame:
-    """FEATURE_COLUMNS frame aligned row-by-row with `objects`."""
-    if objects is None:
-        objects = bricks.read_objects(brickname)
-    seeing = brick_seeing(brickname)
+def engineer_features(objects: pd.DataFrame, seeing: float) -> pd.DataFrame:
+    """FEATURE_COLUMNS frame aligned row-by-row with `objects`.
 
+    Path-free: `objects` is any frame carrying RAW_INPUT_COLUMNS and `seeing`
+    is the brick's median seeing in arcsec (the FWHM normalizer). Use this to
+    build model inputs from any DELVE-MC catalog table — no local brick files
+    needed. `brick_features` wraps it for Pol's on-disk bricks.
+    """
     out: dict[str, object] = {}
     for band in CORE_BANDS:
         out[f"{band}MAG0"] = (
@@ -110,3 +140,12 @@ def brick_features(
     out["CONC"] = _concentration(objects)
 
     return pd.DataFrame(out, index=objects.index)[list(FEATURE_COLUMNS)]
+
+
+def brick_features(
+    brickname: str, objects: pd.DataFrame | None = None
+) -> pd.DataFrame:
+    """FEATURE_COLUMNS frame for one local brick (reads its files + seeing)."""
+    if objects is None:
+        objects = bricks.read_objects(brickname)
+    return engineer_features(objects, brick_seeing(brickname))

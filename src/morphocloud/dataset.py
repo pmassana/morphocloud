@@ -17,6 +17,7 @@ import numpy as np
 import pandas as pd
 
 from . import bricks, features
+from .features import quality_mask  # the quality cut lives in features now
 from .labels import assemble
 
 # split unit: nside=16 nest superpixels (~13.4 deg^2, ~210 bricks each) —
@@ -25,11 +26,6 @@ from .labels import assemble
 SPLIT_NSIDE = 16
 SPLIT_FRACTIONS = (("train", 0.70), ("val", 0.15), ("test", 0.15))
 
-# quality cuts: detected with a sane error in >= 2 of g/r/i
-QUALITY_BANDS = ("G", "R", "I")
-MAX_BAND_ERR = 0.5
-MIN_GOOD_BANDS = 2
-
 # HST label-noise guard: in bricks where more than this fraction of
 # HST_GALAXY claims collide with star labels (crowded MC-bar pointings,
 # ~50% purity below the Gaia limit in the worst fields), galaxy labels
@@ -37,15 +33,6 @@ MIN_GOOD_BANDS = 2
 MAX_HST_CONFLICT = 0.2
 
 ID_COLUMNS = ("BRICKNAME", "OBJID", "RA", "DEC")
-
-
-def quality_mask(objects: pd.DataFrame) -> pd.Series:
-    """Sources detected with a sane error in >= MIN_GOOD_BANDS of g/r/i."""
-    good = sum(
-        ((objects[f"NDET{b}"] > 0) & (objects[f"{b}ERR"] < MAX_BAND_ERR)).astype(int)
-        for b in QUALITY_BANDS
-    )
-    return good >= MIN_GOOD_BANDS
 
 
 @functools.lru_cache(maxsize=None)

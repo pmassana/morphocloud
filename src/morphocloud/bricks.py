@@ -14,11 +14,11 @@ import pandas as pd
 from astropy.table import Table
 
 from .config import (
-    BRICK_LIST,
     CORE_BANDS,
-    DELVEMC_DATA,
     FWHM_SENTINEL,
     MAG_SENTINEL,
+    require_brick_list,
+    require_delvemc_data,
 )
 
 # ERR / SCATTER / MAGERR_AUTO columns use 9.99 as their missing sentinel
@@ -41,17 +41,17 @@ MORPH_SENTINELS = {
 
 
 def object_path(brickname: str):
-    return DELVEMC_DATA / f"{brickname}_object.fits.gz"
+    return require_delvemc_data() / f"{brickname}_object.fits.gz"
 
 
 def meta_path(brickname: str):
-    return DELVEMC_DATA / f"{brickname}_meta.fits"
+    return require_delvemc_data() / f"{brickname}_meta.fits"
 
 
 @functools.lru_cache(maxsize=1)
 def load_brick_list() -> pd.DataFrame:
     """Brick definitions for the footprint (one row per 0.25 deg brick)."""
-    df = Table.read(BRICK_LIST).to_pandas()
+    df = Table.read(require_brick_list()).to_pandas()
     if df["BRICKNAME"].dtype == object:
         df["BRICKNAME"] = df["BRICKNAME"].str.decode("utf-8")
     df["BRICKNAME"] = df["BRICKNAME"].str.strip()
@@ -62,7 +62,7 @@ def available_bricks() -> list[str]:
     """Bricknames with an object catalog on disk."""
     return sorted(
         p.name.removesuffix("_object.fits.gz")
-        for p in DELVEMC_DATA.glob("*_object.fits.gz")
+        for p in require_delvemc_data().glob("*_object.fits.gz")
         if not p.name.endswith("_joint_object.fits.gz")
     )
 

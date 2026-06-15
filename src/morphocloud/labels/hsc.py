@@ -93,7 +93,8 @@ def isolated_mask(df: pd.DataFrame,
     out = pd.Series(False, index=df.index)
     if len(df) < 2:
         return ~out if len(df) == 1 else out
-    ra = df["matchra"].to_numpy(); dec = df["matchdec"].to_numpy()
+    ra = df["matchra"].to_numpy()
+    dec = df["matchdec"].to_numpy()
     dec0 = np.radians(np.median(dec))
     tree = cKDTree(np.column_stack([ra * np.cos(dec0), dec]))
     nn, _ = tree.query(np.column_stack([ra * np.cos(dec0), dec]), k=2)

@@ -1,6 +1,5 @@
 """Feature extraction tests against the real y4t2 catalogs."""
 
-import numpy as np
 import pandas as pd
 import pytest
 
@@ -8,7 +7,8 @@ from morphocloud import bricks, features
 from morphocloud.config import DELVEMC_DATA
 
 pytestmark = pytest.mark.skipif(
-    not DELVEMC_DATA.exists(), reason="DELVE-MC catalogs not on this machine"
+    DELVEMC_DATA is None or not DELVEMC_DATA.exists(),
+    reason="DELVE-MC catalogs not on this machine",
 )
 
 BRICKS = ["0002m587", "0830m680"]

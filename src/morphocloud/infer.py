@@ -21,9 +21,29 @@ import xgboost as xgb
 
 from . import bricks, features
 from .config import MODELS_DIR
-from .dataset import quality_mask
+from .features import quality_mask
 
 DEFAULT_MODEL = MODELS_DIR / "baseline_lshsc_xgb.json"
+
+
+def _to_frame(table) -> pd.DataFrame:
+    """Normalize any tabular input to a pandas DataFrame.
+
+    Accepts a pandas DataFrame (returned as-is), an astropy Table (duck-typed on
+    ``to_pandas`` so astropy stays an install-time, not import-time, concern), or
+    a numpy structured/record array. This lets inference run on whatever catalog
+    representation the caller already has.
+    """
+    if isinstance(table, pd.DataFrame):
+        return table
+    if hasattr(table, "to_pandas"):  # astropy.table.Table and friends
+        return table.to_pandas()
+    if isinstance(table, np.ndarray) and table.dtype.names is not None:
+        return pd.DataFrame(table)
+    raise TypeError(
+        "expected a pandas DataFrame, an astropy Table, or a numpy structured "
+        f"array with named fields; got {type(table).__name__}"
+    )
 
 
 class StarGalaxyClassifier:
@@ -99,19 +119,75 @@ class StarGalaxyClassifier:
         out[valid] = tab[col].to_numpy()[idx[valid]]
         return out if r_in.ndim else float(out[0])
 
-    def predict_proba(self, feats: pd.DataFrame):
-        """Return (raw_score, calibrated P(star)) for a FEATURE_COLUMNS frame.
+    def smooth_threshold(self, operating_point="leak1", degree=2,
+                         weight_by_counts=True, eps=1e-4):
+        """A smooth P_STAR-vs-magnitude cut T(r), as a callable.
 
-        Missing features stay NaN - XGBoost routes them natively, exactly as in
-        training. A plain DMatrix is exact here: quantization only affected
-        training-time split-finding, not the learned tree thresholds.
+        The per-magnitude table gives a calibrated P_STAR cut per r-bin for an
+        operating point, but the values are noisy bin-to-bin and pile up against
+        1 at the faint end. This fits a degree-`degree` polynomial in LOGIT space
+        (so the curve stays in (0, 1)) and returns a closure
+        ``threshold_for(rmag0, strictness=0.0, flat=None)`` -> cut(s) shaped like
+        `rmag0`. `strictness` is a single logit-space dial: > 0 tightens, < 0
+        loosens the cut everywhere without saturating at the ceiling. Inside the
+        table r-range the fitted curve is returned; outside it returns `flat`
+        (or, if `flat is None`, the curve clamped at the nearest edge).
+
+        This is the smooth replacement for the step lookup in `threshold_for`;
+        use `P_STAR >= smooth_threshold('leak1')(RMAG0)` for a star/galaxy call.
         """
+        if self.thresholds is None:
+            raise RuntimeError(
+                "no threshold table bundled with this model "
+                "(expected a sibling .thresholds.csv next to the weights)"
+            )
+        if operating_point not in self.OPERATING_POINTS:
+            raise ValueError(
+                f"unknown operating_point {operating_point!r}; choose from "
+                f"{sorted(self.OPERATING_POINTS)}"
+            )
+        tab = self.thresholds
+        col = self.OPERATING_POINTS[operating_point]
+        r_mid = 0.5 * (tab["r_lo"].to_numpy() + tab["r_hi"].to_numpy())
+        t = np.clip(tab[col].to_numpy(dtype=float), eps, 1.0 - eps)
+        y = np.log(t / (1.0 - t))  # logit
+        w = None
+        if weight_by_counts and {"n_gal", "n_star"} <= set(tab.columns):
+            w = np.sqrt(tab["n_gal"].to_numpy() + tab["n_star"].to_numpy())
+        poly = np.poly1d(np.polyfit(r_mid, y, deg=degree, w=w))
+        r_min, r_max = float(tab["r_lo"].min()), float(tab["r_hi"].max())
+
+        def threshold_for(rmag0, strictness=0.0, flat=None):
+            r = np.atleast_1d(np.asarray(rmag0, dtype=float))
+            out = 1.0 / (1.0 + np.exp(-(poly(np.clip(r, r_min, r_max)) + strictness)))
+            if flat is not None:
+                outside = (r < r_min) | (r >= r_max) | ~np.isfinite(r)
+                out = np.where(outside, flat, out)
+            return out if np.ndim(rmag0) else float(out[0])
+
+        return threshold_for
+
+    def predict_proba(self, table):
+        """Return (raw_score, calibrated P(star)) for a feature table.
+
+        `table` is any input `_to_frame` accepts (pandas DataFrame, astropy
+        Table, or numpy structured array) carrying the model's feature columns
+        (features.FEATURE_COLUMNS). Missing features stay NaN - XGBoost routes
+        them natively, exactly as in training. A plain DMatrix is exact here:
+        quantization only affected training-time split-finding, not the learned
+        tree thresholds.
+        """
+        feats = _to_frame(table)
         X = feats[self.features].to_numpy(dtype=np.float32)
         dmat = xgb.DMatrix(X, feature_names=self.features)
         raw = self.booster.predict(
             dmat, iteration_range=(0, self.best_iteration + 1)
         )
         return raw, np.interp(raw, self.cal_x, self.cal_y)
+
+    def predict(self, table) -> np.ndarray:
+        """Calibrated P(star) for a feature table (see `predict_proba`)."""
+        return self.predict_proba(table)[1]
 
     def classify_brick(self, brickname: str, unique_only: bool = False) -> pd.DataFrame:
         """Per-source classification table for one brick.
